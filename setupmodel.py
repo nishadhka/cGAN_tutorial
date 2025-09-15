@@ -1,0 +1,115 @@
+import gc
+
+from tensorflow.keras.optimizers.legacy import Adam
+#from tensorflow.keras.optimizers import Adam 
+
+from model import Deterministic, WGANGP, VAE, generator, discriminator
+
+
+def setup_model(
+    *,
+    mode=None,
+    arch=None,
+    downscaling_steps=None,
+    input_channels=None,
+    constant_fields=None,
+    filters_gen=None,
+    filters_disc=None,
+    noise_channels=None,
+    latent_variables=None,
+    padding=None,
+    kl_weight=None,
+    ensemble_size=None,
+    CLtype=None,
+    content_loss_weight=None,
+    lr_disc=None,
+    lr_gen=None
+):
+    if mode in ("GAN", "VAEGAN"):
+        gen_to_use = {
+            "normal": generator,
+            "forceconv": generator,
+            "forceconv-long": generator,
+        }[arch]
+        disc_to_use = {
+            "normal": discriminator,
+            "forceconv": discriminator,
+            "forceconv-long": discriminator,
+        }[arch]
+    elif mode == "det":
+        gen_to_use = {"normal": generator, "forceconv": generator}[arch]
+
+    if mode == "GAN":
+        gen = gen_to_use(
+            mode=mode,
+            arch=arch,
+            downscaling_steps=downscaling_steps,
+            input_channels=input_channels,
+            constant_fields=constant_fields,
+            filters_gen=filters_gen,
+            noise_channels=noise_channels,
+            padding=padding,
+        )
+        disc = disc_to_use(
+            arch=arch,
+            downscaling_steps=downscaling_steps,
+            input_channels=input_channels,
+            constant_fields=constant_fields,
+            filters_disc=filters_disc,
+            padding=padding,
+        )
+        model = WGANGP(
+            gen,
+            disc,
+            mode,
+            lr_disc=lr_disc,
+            lr_gen=lr_gen,
+            ensemble_size=ensemble_size,
+            CLtype=CLtype,
+            content_loss_weight=content_loss_weight,
+        )
+    elif mode == "VAEGAN":
+        encoder, decoder = gen_to_use(
+            mode=mode,
+            arch=arch,
+            downscaling_steps=downscaling_steps,
+            input_channels=input_channels,
+            constant_fields=constant_fields,
+            filters_gen=filters_gen,
+            latent_variables=latent_variables,
+            padding=padding,
+        )
+        disc = disc_to_use(
+            arch=arch,
+            downscaling_steps=downscaling_steps,
+            input_channels=input_channels,
+            constant_fields=constant_fields,
+            filters_disc=filters_disc,
+            padding=padding,
+        )
+        gen = VAE(encoder, decoder)
+        model = WGANGP(
+            gen,
+            disc,
+            mode,
+            lr_disc=lr_disc,
+            lr_gen=lr_gen,
+            kl_weight=kl_weight,
+            ensemble_size=ensemble_size,
+            CLtype=CLtype,
+            content_loss_weight=content_loss_weight,
+        )
+    elif mode == "det":
+        gen = gen_to_use(
+            mode=mode,
+            arch=arch,
+            downscaling_steps=downscaling_steps,
+            input_channels=input_channels,
+            constant_fields=constant_fields,
+            filters_gen=filters_gen,
+            padding=padding,
+        )
+        model = Deterministic(gen, lr=lr_gen, loss="mse", optimizer=Adam)
+
+    gc.collect()
+    return model

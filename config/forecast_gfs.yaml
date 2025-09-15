@@ -1,0 +1,14 @@
+MODEL:
+    folder: "/home/n/nath/cGAN/shruti/logfile_v2/"
+    checkpoint: 115200
+
+INPUT:
+    folder: "/network/group/aopp/predict/TIP022_NATH_GFSAIMOD/netcdf/"
+    file: ["IFS_20240320_00Z.nc","IFS_20240321_00Z.nc","IFS_20240322_00Z.nc","IFS_20240323_00Z.nc","IFS_20240324_00Z.nc","IFS_20240325_00Z.nc",
+    "IFS_20240326_00Z.nc","IFS_20240327_00Z.nc","IFS_20240328_00Z.nc","IFS_20240329_00Z.nc","IFS_20240330_00Z.nc","IFS_20240331_00Z.nc"]
+    start_hour: 30
+    end_hour: 54
+
+OUTPUT:
+    folder: "/network/group/aopp/predict/AWH026_NATH_GFSAIMOD/cGAN/predictions/gfs/"
+    ensemble_members: 50

@@ -1,0 +1,13 @@
+MODEL:
+    folder: "/network/group/aopp/predict/TIP017_COOPER_SURFACE/cGAN/ICPAC/6h_IMERG_v7/logs/"
+    checkpoint: 316800
+
+INPUT:
+    folder: "/network/group/aopp/predict/TIP021_MCRAECOOPER_IFS/ICPAC_data/operational/"
+    file: "IFS_20240324_00Z.nc "
+    start_hour: 30
+    end_hour: 54
+
+OUTPUT:
+    folder: "/network/group/aopp/predict/TIP022_NATH_GFSAIMOD/cGAN/predictions/generated/"
+    ensemble_members: 1000
