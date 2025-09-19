@@ -8,6 +8,7 @@ import tensorflow as tf
 import xarray as xr
 import xbatcher
 from .data import all_fcst_fields, denormalise, get_dates, HOURS
+from .data_generator import DataGenerator as DataGeneratorFull
 import sys
 sys.path.insert(1,"../")
 from config import get_data_paths, read_downscaling_factor
@@ -214,7 +215,6 @@ def write_data(
     fcst_norm=True,
     consolidated=False,
 ):
-    from data_generator import DataGenerator as DataGeneratorFull
 
     # assert isinstance(year, int)
 
@@ -227,11 +227,7 @@ def write_data(
     assert num_class == 4
 
     scaling_factor = ds_fac
-    dummy_data = xr.open_dataset(os.path.join(CONSTANTS_PATH, "elev.nc"))
-    dummy_xbatcher = xbatcher.BatchGenerator(dummy_data,
-                {"lat": img_chunk_width, "lon": img_chunk_width},
-                input_overlap={"lat": int(img_chunk_width//4), "lon": int(img_chunk_width//4)})
-    nsamples = len(dummy_xbatcher)#img_size_h * img_size_w // (img_chunk_width**2)
+    nsamples = img_size_h * img_size_w // (img_chunk_width**2)
 
     # chosen to approximately cover the full image, but can be changed!
     print(
@@ -251,8 +247,6 @@ def write_data(
             ]
         else:
             dates = get_dates(year, start_hour=s_hour, end_hour=e_hour)
-            if year == 2019:
-                dates = dates[120:]
 
         # print(dates)
         dgc = DataGeneratorFull(
@@ -275,7 +269,7 @@ def write_data(
             options = tf.io.TFRecordOptions(compression_type="GZIP", flush_mode=None)
             fle_hdles.append(tf.io.TFRecordWriter(flename, options=options))
         i_batch=0
-        for batch in tqdm(range(len(dgc))):
+        for batch in tqdm(range(nsamples)):
             #print(batch)
             #if (batch % 10) == 0:
             #    print(time_idx, batch)
@@ -283,56 +277,19 @@ def write_data(
             
             for ii in range(nsamples):
                 # e.g. for image width 94 and img_chunk_width 20, can have 0:20 up to 74:94
-                idh = np.isin(dummy_data.lat.values,dummy_xbatcher[ii].lat.values)
-                #random.randint(0, img_size_h - img_chunk_width)
-                idw = np.isin(dummy_data.lon.values,dummy_xbatcher[ii].lon.values)
-                #random.randint(0, img_size_w - img_chunk_width)
+                idh = random.randint(0, img_size_h - img_chunk_width)
+                idw = random.randint(0, img_size_w - img_chunk_width)
 
-                #idh_lo = np.isin(lo_res_lat,np.round(dummy_xbatcher[ii].lat.values,decimals=2))
-                #idw_lo = np.isin(lo_res_lon,np.round(dummy_xbatcher[ii].lon.values,decimals=2))
-                ## necessary step since 0.1 degree only has values e.g. 30.95 and 31.05 but no 31 which
-                ## is present in 0.25 degree
-
-                #false_falses = []
-                #for i,_ in enumerate(idh_lo):
-                #    if idh_lo[i-1] and idh_lo[i+1]:
-                #        false_falses.append(i)
-                #    else:
-                #        try:
-                #            if idh_lo[i-1] and not idh_lo[i+1]:
-                #                false_falses.append(i)
-                #        except:
-                #            if not idh_lo[i-1] and idh_lo[i+1]:
-                #                false_falses.append(i)
-
-                #idh_lo[false_falses] = True
-
-                #false_falses = []
-                #for i,_ in enumerate(idw_lo):
-                #    if idw_lo[i-1] and idw_lo[i+1]:
-                #        false_falses.append(i)
-                #    else:
-                #        try:
-                #            if idw_lo[i-1] and not idw_lo[i+1]:
-                #                false_falses.append(i)
-                #        except:
-                #            if not idw_lo[i-1] and idw_lo[i+1]:
-                #                false_falses.append(i)
-
-                #idw_lo[false_falses] = True
-
-                #assert idh_lo.sum()==48
-                #assert idw_lo.sum()==48
-
-                mask = sample[1]["mask"][0,idh,:][:,idw].flatten()
+                mask = sample[1]["mask"][0,idh:idh+img_chunk_width,:][:,idw:idw+img_chunk_width].flatten()
                 if np.any(mask):
                     # some of the truth data is invalid, so don't use this subsample
                     print(i_batch)
                     continue
 
-                truth = sample[1]["output"][0,idh,:][:,idw].flatten()
-                const = sample[0]["hi_res_inputs"][0,idh,:,:][:,idw,:].flatten()
-                forecast = sample[0]["lo_res_inputs"][0,idh,:,:][:,idw,:].flatten()
+                truth = sample[1]["output"][0,idh:idh+img_chunk_width,:][:,idw:idw+img_chunk_width].flatten()
+ 
+                const = sample[0]["hi_res_inputs"][0,idh:idh+img_chunk_width,:,:][:,idw:idw+img_chunk_width,:].flatten()
+                forecast = sample[0]["lo_res_inputs"][0,idh:idh+img_chunk_width,:,:][:,idw:idw+img_chunk_width,:].flatten()
                 feature = {
                     "generator_input": _float_feature(forecast),
                     "constants": _float_feature(const),

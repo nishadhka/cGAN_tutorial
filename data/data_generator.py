@@ -128,7 +128,7 @@ class DataGenerator(Sequence):
             fcst_fields=self.fcst_fields,
             log_precip=self.log_precip,
             norm=self.fcst_norm,
-            consolidated = self.consolidated,
+            #consolidated = self.consolidated,
         )  ## note time_idx_batch is anyways redundant now in load_fcst_truth_batch
 
         if self.autocoarsen:

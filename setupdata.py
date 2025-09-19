@@ -1,6 +1,7 @@
 import gc
 
-from data import all_fcst_fields, DataGenerator
+from data import all_fcst_fields
+from data.tfrecords_generator import DataGenerator
 import numpy as np
 
 
@@ -14,7 +15,7 @@ def setup_batch_gen(train_years, batch_size=16, autocoarsen=False, weights=None)
 
 
 def setup_full_image_dataset(years, batch_size=1, autocoarsen=False):
-    from data_generator import DataGenerator as DataGeneratorFull
+    from data import DataGenerator as DataGeneratorFull
     from data import get_dates
 
     dates = get_dates(years, start_hour=30, end_hour=54)
