@@ -29,8 +29,8 @@ Before starting with anything, you need to check that all data paths are correct
 
 Creating the training data needed to train the cGAN, require the following steps:
 
-1) Setting up the data generator and visualising data to make sure it is loaded in correctly.
-2) Creating the forecast normalisation constants consisting of the min, max, mean and standard deviation of each variable considered. This is necessary as for fitting any AI model, values need to be normalised to between 0 and 1.
+1) Creating the forecast normalisation constants consisting of the min, max, mean and standard deviation of each variable considered. This is necessary as for fitting any AI model, values need to be normalised.
+2) Setting up the data generator and visualising data to make sure it is loaded in correctly.
 3) Creating the tfrecord files
 
 An example notebook is provided under the example_notebooks directory called [create_tfrecords.ipynb](https://github.com/snath-xoc/cGAN_tutorial/blob/main/example_notebooks/create_tfrecords.ipynb) which allows us to follow these steps.
