@@ -9,14 +9,14 @@ The figure below provides an overview of the data loading workflow:
 
 The key files within the directories in order of importance are:
 
-1) [data.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/data/data.py) where:
-    a) Individual forecast variables are loaded under `load_fcst`, and all variables are loaded by calling `load_fcst_stack`.
-    b) constants (topography and land-sea mask) are loaded under `load_hires_constants`.
-    c) truth data is loaded under `load_truth_and_mask`.
-    d) all three are loaded in for a given date and time in `load_fcst_truth_batch`.
+1) [data.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/data/data.py) where:<br>
+    a) Individual forecast variables are loaded under `load_fcst`, and all variables are loaded by calling `load_fcst_stack`.<br>
+    b) constants (topography and land-sea mask) are loaded under `load_hires_constants`.<br>
+    c) truth data is loaded under `load_truth_and_mask`.<br>
+    d) all three are loaded in for a given date and time in `load_fcst_truth_batch`.<br>
 2) [data_generator.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/data/data_generator.py) which has a ```DataGenerator``` class that runs `load_fcst_truth_batch` at different dates and times through iterative `__getitem__` calls. This is an important function as it does not load in all data to memory at once but (in Nishadh's words) allows streaming.
-3) [tfrecords_generator.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/data/tfrecords_generator.py) which:
-    a)  creates tfrecords by calling `write_data`.
+3) [tfrecords_generator.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/data/tfrecords_generator.py) which:<br>
+    a)  creates tfrecords by calling `write_data`.<br>
     b) during training it loads the batches from the tfrecords via the `create_mixed_dataset` that is called within its own `DataGenerator` function.
     
 
