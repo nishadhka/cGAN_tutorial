@@ -4,7 +4,8 @@ import gc
 import json
 import os
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # suppress TF debug message spam in v2.12
+#os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # suppress TF debug message spam in v2.12
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import yaml
 from pathlib import Path
 
@@ -39,6 +40,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Path to configuration file")
     parser.add_argument("--tune", dest="tune", action="store_true",)
+    parser.add_argument("--log_wandb", dest="log_wandb", action="store_true", default=False)
     parser.set_defaults(do_training=True)
     parser.add_argument(
         "--no_train",
@@ -148,7 +150,7 @@ if __name__ == "__main__":
 
     # create log folder and model save/load subfolder if they don't exist
     Path(log_folder).mkdir(parents=True, exist_ok=True)
-    model_weights_root = os.path.join("logfile_v2", "models")
+    model_weights_root = os.path.join(log_folder, "models")
     Path(model_weights_root).mkdir(parents=True, exist_ok=True)
 
     # save setup parameters
@@ -196,19 +198,7 @@ if __name__ == "__main__":
             autocoarsen=autocoarsen,
             weights=training_weights,
             batch_size=batch_size)
-        #df_vars, df_truth, df_constants = gfat.get_all(train_years, generator=True)
-        #df_vars_val, df_truth_val, df_constants_val = gfat.get_all(
-        #    val_years, generator=True
-        #)
 
-        #batch_gen_train = iter(batch_from_zarr_store(df_vars, df_truth, df_constants))
-        #data_gen_valid = iter(
-        #    zarr_store_loader(
-        #        df_vars_val, df_truth_val, df_constants_val, batch_size=1, full=True
-        #    )
-        #)
-
-        # print(batch_gen_train)
         if args.tune:
             print("Tuning cGAN")
             model.load(model.filenames_from_root(model_weights_root))
@@ -236,7 +226,8 @@ if __name__ == "__main__":
             log_list = []
 
         plot_fname = os.path.join(log_folder, "progress")
-        run = wandb.init(project='cGAN-gefs-tf216-run')
+        if args.log_wandb:
+            run = wandb.init(project='cGAN-gefs-tf216-run')
         while training_samples < num_samples:  # main training loop
             gc.collect()
             print(f"Checkpoint {checkpoint}/{num_checkpoints}")
@@ -253,6 +244,8 @@ if __name__ == "__main__":
                 steps_per_checkpoint=steps_per_checkpoint,
                 num_cases=val_size,
                 plot_fn=plot_fname,
+                log_wandb=args.log_wandb,
+                
             )
 
             training_samples += steps_per_checkpoint * batch_size
@@ -286,7 +279,8 @@ if __name__ == "__main__":
 
     else:
         print("Training skipped...")
-    run.finish()
+    if args.log_wandb:
+        run.finish()
     if args.tune:
         eval_fname = os.path.join(log_folder, "eval_validation_tune.txt")
     else:
