@@ -67,9 +67,9 @@ Such that the ```filters_gen=128``` and ```filters_disc=512```.
 
 For training and evaluating the cGAN we follow four simple steps:
 
-1) Set up training and evaluation data by calling ```setup_data``` in [setupdata.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/setupdata.py) which:
-    a) Calls ```setup_batch_gen``` to load in the tfrecords and sample them according to the specified ```training_weights```.
-    b) Calls ```setup_full_image_dataset``` which loads in full images for ```val_years``` to evaluate the cGAN over.
+1) Set up training and evaluation data by calling ```setup_data``` in [setupdata.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/setupdata.py) which:<br>
+    a) Calls ```setup_batch_gen``` to load in the tfrecords and sample them according to the specified ```training_weights```.<br>
+    b) Calls ```setup_full_image_dataset``` which loads in full images for ```val_years``` to evaluate the cGAN over.<br>
 2) Set up the model according to the configuration from [config/config.yaml](https://github.com/snath-xoc/cGAN_tutorial/blob/main/config/config.yaml) by calling ```setup_model``` from [setupmodel.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/setupmodel.py).
 3) Starts training the model by calling ```train_model``` from [model/train.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/model/train.py).
 4) Evaluates the model across the multiple saved checkpoints by calling ```evaluate_multiple_checkpoints``` from [evaluation/evaluation.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/evaluation/evaluation.py).
