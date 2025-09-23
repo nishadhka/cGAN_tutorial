@@ -74,7 +74,7 @@ For training and evaluating the cGAN we follow four simple steps:
 3) Starts training the model by calling ```train_model``` from [model/train.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/model/train.py).
 4) Evaluates the model across the multiple saved checkpoints by calling ```evaluate_multiple_checkpoints``` from [evaluation/evaluation.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/evaluation/evaluation.py).
 
-An example notebook is provided under the example_notebooks directory called [train_cgan.ipynb](https://github.com/snath-xoc/cGAN_tutorial/blob/main/example_notebooks/train_cgab.ipynb) which allows us to follow these steps for one training epoch. To fully train the cGAN it is better to follow the command line instructions: 
+An example notebook is provided under the example_notebooks directory called [train_cgan.ipynb](https://github.com/snath-xoc/cGAN_tutorial/blob/main/example_notebooks/train_cgan.ipynb) which allows us to follow these steps for one training epoch. To fully train the cGAN it is better to follow the command line instructions: 
 
 ```
 python main.py --config path/to/config_file.yaml
