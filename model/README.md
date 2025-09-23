@@ -71,8 +71,8 @@ For training and evaluating the cGAN we follow four simple steps:
     a) Calls ```setup_batch_gen``` to load in the tfrecords and sample them according to the specified ```training_weights```.<br>
     b) Calls ```setup_full_image_dataset``` which loads in full images for ```val_years``` to evaluate the cGAN over.<br>
 2) Set up the model according to the configuration from [config/config.yaml](https://github.com/snath-xoc/cGAN_tutorial/blob/main/config/config.yaml) by calling ```setup_model``` from [setupmodel.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/setupmodel.py).
-3) Starts training the model by calling ```train_model``` from [model/train.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/model/train.py).
-4) Evaluates the model across the multiple saved checkpoints by calling ```evaluate_multiple_checkpoints``` from [evaluation/evaluation.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/evaluation/evaluation.py).
+3) Start training the model by calling ```train_model``` from [model/train.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/model/train.py).
+4) Evaluate the model across the multiple saved checkpoints by calling ```evaluate_multiple_checkpoints``` from [evaluation/evaluation.py](https://github.com/snath-xoc/cGAN_tutorial/blob/main/evaluation/evaluation.py).
 
 An example notebook is provided under the example_notebooks directory called [train_cgan.ipynb](https://github.com/snath-xoc/cGAN_tutorial/blob/main/example_notebooks/train_cgan.ipynb) which allows us to follow these steps for one training epoch. To fully train the cGAN it is better to follow the command line instructions: 
 
