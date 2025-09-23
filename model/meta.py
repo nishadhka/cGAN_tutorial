@@ -1,7 +1,6 @@
 import h5py
 from tensorflow.keras import backend as K
 
-
 class Nontrainable(object):
     def __init__(self, models):
         if not isinstance(models, list):

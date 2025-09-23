@@ -12,7 +12,6 @@ from .data_generator import DataGenerator as DataGeneratorFull
 import sys
 sys.path.insert(1,"../")
 from config import get_data_paths, read_downscaling_factor
-os.environ["TF_USE_LEGACY_KERAS"] = "1"
 
 data_paths = get_data_paths()
 CONSTANTS_PATH = data_paths["GENERAL"]["CONSTANTS_PATH"]

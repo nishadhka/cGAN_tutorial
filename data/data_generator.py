@@ -1,8 +1,4 @@
 """ Data generator class for full-image evaluation of precipitation downscaling network """
-
-import os
-os.environ["TF_USE_LEGACY_KERAS"] = "1"
-
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.utils import Sequence

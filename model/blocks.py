@@ -9,7 +9,6 @@ from tensorflow.keras.layers import (
 
 from .layers import ReflectionPadding2D, SymmetricPadding2D
 
-
 class Conv2DPadding(Layer):
     def __init__(self, filters, kernel_size, stride, padding, dilations):
         super(Conv2DPadding, self).__init__()

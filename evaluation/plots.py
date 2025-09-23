@@ -136,7 +136,7 @@ def plot_sequences(
         # else just plot the data we have (e.g., coarsened truth)
         if cond.shape[-1] > 1:
             all_fcst_fields_list = all_fcst_fields
-            tpidx = 5 * all_fcst_fields_list.index("apcp")
+            tpidx = 4 * all_fcst_fields_list.index("tp")
         else:
             tpidx = 0
         plot_img(denormalise(cond[0, :, :, tpidx]), value_range=value_range)

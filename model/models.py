@@ -6,7 +6,6 @@ from tensorflow.keras import Input
 
 from .blocks import residual_block, const_upscale_block
 
-
 def generator(
     mode,
     arch,

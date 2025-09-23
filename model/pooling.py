@@ -1,6 +1,5 @@
 from tensorflow.keras.layers import MaxPool2D, AvgPool2D
 
-
 def pool(x, pool_type, data_format="channels_last"):
     """Apply pooling operation (via Tensorflow) to input Numpy array x.
     x should be 4-dimensional: N x W x H x C ('channels_last') or N x C x W x H ('channels_first')

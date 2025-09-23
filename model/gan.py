@@ -1,5 +1,3 @@
-import os
-os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import gc
 import numpy as np
 import tensorflow as tf
@@ -11,7 +9,6 @@ from tensorflow.python.keras.utils import generic_utils
 #from tensorflow.python.framework.ops import disable_eager_execution
 
 #disable_eager_execution()
-
 
 from .layers import GradientPenalty, RandomWeightedAverage
 from .meta import (
@@ -216,13 +213,13 @@ class WGANGP(object):
         show_progress=True,
     ):
         disc_target_real = None
-        # for inputs, _ in batch_gen.take(1).as_numpy_iterator():
-        # inputs, _ in batch_gen:
-        # tmp_batch = inputs["lo_res_inputs"].numpy()
-        batch_size = 8  # tmp_batch.shape[0]
+        for inputs, _ in batch_gen.take(1).as_numpy_iterator():
+            # inputs, _ in batch_gen:
+            tmp_batch = inputs["lo_res_inputs"]
+        batch_size = tmp_batch.shape[0]
 
-        # del tmp_batch
-        # del inputs
+        del tmp_batch
+        del inputs
 
         if show_progress:
             # Initialize progbar and batch counter
@@ -245,15 +242,10 @@ class WGANGP(object):
             disc_loss_n = 0
             for rep in range(training_ratio):
                 # generate some real samples
-                #try:
                 inputs, outputs = batch_gen_iter.get_next()#.take(1).as_numpy_iterator()
                 cond = inputs["lo_res_inputs"]
-                #cond = tf.image.resize(cond,[tf.math.floor(\
-                #    1.25*cond.shape.as_list()[-3]),tf.math.floor(1.25*cond.shape.as_list()[-2])])
                 const = inputs["hi_res_inputs"]
                 sample = outputs["output"]
-                #except:
-                #    continue
 
                 with Nontrainable(self.gen):
                     dl = self.disc_trainer.train_on_batch(
@@ -271,15 +263,10 @@ class WGANGP(object):
             disc_loss /= disc_loss_n
 
             with Nontrainable(self.disc):
-                #try:
                 inputs, outputs = batch_gen_iter.get_next()
                 cond = inputs["lo_res_inputs"]
-                #cond = tf.image.resize(cond,[tf.math.floor(\
-                #    1.25*cond.shape.as_list()[-3]),tf.math.floor(1.25*cond.shape.as_list()[-2])])
                 const = inputs["hi_res_inputs"]
                 sample = tf.squeeze(outputs["output"])
-                #except:
-                #    continue
 
                 condconst = [cond, const]
                 if self.ensemble_size is None:

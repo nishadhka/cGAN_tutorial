@@ -7,7 +7,7 @@ MODEL:
     padding: "reflect"  # convolution padding: 'same', 'reflect', or 'symmetric'
         
 SETUP:
-    log_folder: "logfile_gefs/"
+    log_folder: "logfile_course/"
 
 GENERATOR:
     filters_gen: 128  # generator network width
@@ -20,18 +20,18 @@ DISCRIMINATOR:
     learning_rate_disc: 1e-4  # if training blows up, decrease this
 
 TRAIN:
-    train_years: [2017,2018,2019,2022] 
+    train_years: [2018] 
     training_weights: [0.4, 0.3, 0.2, 0.1]  # frequency to sample from each bin
     num_samples: 640000 #total generator training samples
     steps_per_checkpoint: 9600 #number of batches per checkpoint save
-    batch_size: 8  # we could use 16 without CL, or 2 with CL
+    batch_size: 2  # we could use 16 without CL, or 2 with CL
     kl_weight: 1e-8  # used for VAEGAN
     ensemble_size: 10  # size of ensemble for content loss; use null to turn off
     CL_type: "ensmeanMSE"  # type of content loss to use: 'CRPS', 'CRPS_phys', 'ensmeanMSE', 'ensmeanMSE_phys'
     content_loss_weight: 1000.0  # we used 1000 for ensmeanMSE, and 100 for CRPS´
 
 VAL:
-    val_years: 2023  # year to draw validation data from (only used for progress.pdf)
+    val_years: 2018  # year to draw validation data from (only used for progress.pdf)
     val_size: 8  # number of examples to plot
 
 EVAL:

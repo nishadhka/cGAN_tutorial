@@ -60,15 +60,7 @@ def setup_inputs(
     _, data_gen_valid = setupdata.setup_data(
         val_years=val_years, autocoarsen=autocoarsen
     )
-    #df_vars_val, df_truth_val, df_constants_val = gfat.get_all(
-    #        val_years, generator=True
-    #    )
 
-    #data_gen_valid = iter(
-    #    zarr_store_loader(
-    #        df_vars_val, df_truth_val, df_constants_val, batch_size=1, full=True
-    #    )
-    #)
     
     return gen, data_gen_valid#, df_truth_val.time.values
 
@@ -116,8 +108,7 @@ def eval_one_chkpt(
     ralsd_all = []
 
     data_gen_iter = iter(data_gen)
-    all_fcst_fields = all_fcst_fields
-    tpidx = 5 * all_fcst_fields_list.index("apcp")  # 4*idx has tp ens mean
+    tpidx = 4 * all_fcst_fields.index("tp")  # 4*idx has tp ens mean
     batch_size = 1  # do one full-size image at a time
 
     if mode == "det":
@@ -293,7 +284,7 @@ def eval_one_chkpt(
         # keep track of input and truth rainfall values, to facilitate further ranks processing
         cond_exp = np.repeat(
             np.repeat(
-                data.denormalise(cond[..., tpidx]).astype(np.float32), ds_fac, axis=-1
+                denormalise(cond[..., tpidx]).astype(np.float32), ds_fac, axis=-1
             ),
             ds_fac,
             axis=-2,
@@ -373,7 +364,7 @@ def evaluate_multiple_checkpoints(
     padding,
     ensemble_size,
 ):
-    df_dict = read_config.read_downscaling_factor()
+    df_dict = read_downscaling_factor()
 
     gen, data_gen_valid = setup_inputs(
         mode=mode,
@@ -461,7 +452,7 @@ def evaluate_multiple_checkpoints(
 
 def calculate_ralsd_rmse(truth, samples):
     # check 'batch size' is 1; can rewrite to handle batch size > 1 if necessary
-    print(truth.shape, samples[0].shape)
+    #print(truth.shape, samples[0].shape)
     assert truth.shape[0] == 1
     assert samples[0].shape[0] == 1
 
