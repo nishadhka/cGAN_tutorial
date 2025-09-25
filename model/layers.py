@@ -1,7 +1,5 @@
 import tensorflow as tf
 from tensorflow.keras import backend as K
-import keras.random as krandom
-import keras.ops as kops
 from tensorflow.keras.layers import Layer
 from tensorflow.python.keras.layers.merge import _Merge
 #from tensorflow.python.framework.ops import disable_eager_execution
