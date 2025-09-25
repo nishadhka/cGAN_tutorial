@@ -6,7 +6,6 @@ from tqdm import tqdm
 import numpy as np
 import tensorflow as tf
 import xarray as xr
-import xbatcher
 from .data import all_fcst_fields, denormalise, get_dates, HOURS
 from .data_generator import DataGenerator as DataGeneratorFull
 import sys
