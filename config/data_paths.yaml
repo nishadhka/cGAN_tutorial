@@ -22,7 +22,19 @@ COURSE:
     GENERAL:
         TRUTH_PATH: '/network/group/aopp/predict/AWH024_COOPERNATH_IFS/IFS/IMERG_V07/ICPAC_region/6h/'
         FORECAST_PATH: '/network/group/aopp/predict/TIP021_MCRAECOOPER_IFS/IFS-regICPAC-meansd/'
+        CONSTANTS_PATH_GEFS: '/network/group/aopp/predict/AWH026_NATH_GFSAIMOD/cGAN/constants-regICPAC/'
         CONSTANTS_PATH: '/network/group/aopp/predict/TIP017_COOPER_SURFACE/cGAN/ICPAC/6h_IMERG_v6_Andrew/constants/'
 
     TFRecords:
         tfrecords_path: '/network/group/aopp/predict/AWH026_NATH_GFSAIMOD/cGAN/tfrecords_course/'
+
+ICPAC_CLOUD:
+    GENERAL:
+        TRUTH_PATH: '/home/nshruti_icpac_net/TRUTH/'
+        FORECAST_PATH: '/home/nshruti_icpac_net/zarr/'
+        CONSTANTS_PATH_GEFS: '/home/nshruti_icpac_net/CONSTANTS/'
+        CONSTANTS_PATH: '/home/nshruti_icpac_net/CONSTANTS_IFS/
+
+    TFRecords:
+        tfrecords_path: '/home/nshruti_icpac_net/tfrecords/'
+

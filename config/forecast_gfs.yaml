@@ -1,14 +1,13 @@
 MODEL:
-    folder: "/home/n/nath/cGAN/shruti/logfile_v2/"
-    checkpoint: 115200
+    folder: "/home/nshruti_icpac_net/logfile_gefs_v3" #"/home/n/nath/cGAN/shruti/logfile_v2/" settings for GFS
+    checkpoint: 345600 #115200 settings for GFS
 
 INPUT:
-    folder: "/network/group/aopp/predict/TIP022_NATH_GFSAIMOD/netcdf/"
-    file: ["IFS_20240320_00Z.nc","IFS_20240321_00Z.nc","IFS_20240322_00Z.nc","IFS_20240323_00Z.nc","IFS_20240324_00Z.nc","IFS_20240325_00Z.nc",
-    "IFS_20240326_00Z.nc","IFS_20240327_00Z.nc","IFS_20240328_00Z.nc","IFS_20240329_00Z.nc","IFS_20240330_00Z.nc","IFS_20240331_00Z.nc"]
+    folder: "/home/nshruti_icpac_net/GEFS"
+    dates: ["2024-04-20"]
     start_hour: 30
     end_hour: 54
 
 OUTPUT:
-    folder: "/network/group/aopp/predict/AWH026_NATH_GFSAIMOD/cGAN/predictions/gfs/"
+    folder: "/home/nshruti_icpac_net/cGAN_gefs/predictions/"
     ensemble_members: 50

@@ -20,7 +20,7 @@ from config import get_data_paths
 data_paths = get_data_paths()
 TRUTH_PATH = data_paths["GENERAL"]["TRUTH_PATH"]
 FCST_PATH = data_paths["GENERAL"]["FORECAST_PATH"]
-CONSTANTS_PATH = data_paths["GENERAL"]["CONSTANTS_PATH"]
+CONSTANTS_PATH = data_paths["GENERAL"]["CONSTANTS_PATH_GEFS"]
 
 all_fcst_fields = ['cape','pres','pwat','tmp','ugrd','vgrd','msl','apcp']#'hgt'
 nonnegative_fields = ['cape','msl','pres','pwat','tmp']
@@ -458,6 +458,5 @@ def load_fcst_norm(year=2018):
 
 try:
     fcst_norm = load_fcst_norm(2018)
-    # print(fcst_norm.keys())
 except:  # noqa
     fcst_norm = None
