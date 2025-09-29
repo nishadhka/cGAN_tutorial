@@ -38,7 +38,7 @@ lon_reg = 0.5 * (lon_reg_b[1:] + lon_reg_b[:-1])
 data_path = glob.glob(TRUTH_PATH + "*.nc")
 
 IMERG_data_dir = "/network/group/aopp/predict/TIP021_MCRAECOOPER_IFS/IMERG_V07/"
-IMERG_file_name = f"{IMERG_data_dir}/2018/Jan/3B-HHR.MS.MRG.3IMERG.20180101-S000000-E002959.0000.V07B.HDF5"
+IMERG_file_name = f"../example_notebooks/3B-HHR.MS.MRG.3IMERG.20180101-S000000-E002959.0000.V07B.HDF5"
         
 # HDF5 in the ICPAC region
 h5_file = h5py.File(IMERG_file_name)
