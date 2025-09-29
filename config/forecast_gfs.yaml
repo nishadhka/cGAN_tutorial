@@ -3,7 +3,7 @@ MODEL:
     checkpoint: 345600 #115200 settings for GFS
 
 INPUT:
-    folder: "/home/nshruti_icpac_net/GEFS"
+    folder: "/home/nshruti_icpac_net/GEFS/"
     dates: ["2024-04-20"]
     start_hour: 30
     end_hour: 54
