@@ -32,7 +32,7 @@ ICPAC_CLOUD:
     GENERAL:
         TRUTH_PATH: '/home/nshruti_icpac_net/TRUTH/'
         FORECAST_PATH: '/home/nshruti_icpac_net/zarr/'
-        CONSTANTS_PATH_GEFS: '/home/nshruti_icpac_net/CONSTANTS/'
+        CONSTANTS_PATH_GEFS: '/home/nkalladath_icpac_net/data/CONSTANTS/'
         CONSTANTS_PATH: '/home/nshruti_icpac_net/CONSTANTS_IFS/'
 
     TFRecords:

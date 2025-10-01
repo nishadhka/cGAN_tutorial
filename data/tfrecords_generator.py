@@ -26,9 +26,11 @@ DEFAULT_OUT_SHAPE = (128, 128, 1)
 lo_res_lat = np.arange(-13.75,25,0.25)[::-1]
 lo_res_lon = np.arange(19.25,54.5,0.25)
 
-if not os.path.exists(records_folder):
 
-    os.makedirs(records_folder)
+
+#if not os.path.exists(records_folder):
+
+#    os.makedirs(records_folder)
 
 
 def DataGenerator(years, batch_size, repeat=True, autocoarsen=False, weights=None):

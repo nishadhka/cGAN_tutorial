@@ -1,13 +1,13 @@
 MODEL:
-    folder: "/home/nshruti_icpac_net/logfile_gefs_v3" #"/home/n/nath/cGAN/shruti/logfile_v2/" settings for GFS
+    folder: "/home/nkalladath_icpac_net/data/logfile_gefs_v3/" #"/home/n/nath/cGAN/shruti/logfile_v2/" settings for GFS
     checkpoint: 345600 #115200 settings for GFS
 
 INPUT:
-    folder: "/home/nshruti_icpac_net/GEFS/"
+    folder: "/home/nkalladath_icpac_net/data/netcdf/"
     dates: ["2024-04-20"]
     start_hour: 30
     end_hour: 54
 
 OUTPUT:
-    folder: "/home/nshruti_icpac_net/cGAN_gefs/predictions/"
+    folder: "/home/nkalladath_icpac_net/data/cGAN_gefs/predictions/"
     ensemble_members: 50

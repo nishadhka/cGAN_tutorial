@@ -53,7 +53,7 @@ with open(fcstyaml_path, "r") as f:
         fcst_params = yaml.safe_load(f)
     except yaml.YAMLError as exc:
         print(exc)
-
+        sys.exit(1) 
 # %%
 model_folder = fcst_params["MODEL"]["folder"]
 checkpoint = fcst_params["MODEL"]["checkpoint"]
@@ -207,9 +207,12 @@ def make_fcst(input_folder=input_folder, output_folder=output_folder,
                 # nc_in[field] has shape len(nc_in["time"]) x 29 x 384 x 352
                 
                 # Open input netCDF file
-                input_file = f"{field}_{d.year}.zarr"
+                #input_file = f"{field}_{d.year}.zarr"
+                #nc_in_path = os.path.join(input_folder_year, input_file)
+                #nc_file = xr.open_zarr(nc_in_path)
+                input_file = f"{field}_{d.year}.nc"
                 nc_in_path = os.path.join(input_folder_year, input_file)
-                nc_file = xr.open_zarr(nc_in_path)
+                nc_file = xr.open_dataset(nc_in_path)
                 nc_file = nc_file.sel(
             {"time":day}).isel({"step":[in_time_idx-5,in_time_idx-4]}
                 )
