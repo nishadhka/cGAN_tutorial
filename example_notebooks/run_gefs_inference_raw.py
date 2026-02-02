@@ -36,20 +36,25 @@ from datetime import datetime, timedelta
 # ==============================================================================
 # CONFIGURATION - Raw NetCDF for 2025-09-18
 # ==============================================================================
+# Use relative paths from script directory for portability
+import os as _os
+_SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
+
 CONFIG = {
-    "model_folder": "/home/roller/cgan_gefs_forecast/logfile_gefs_v3/",
+    # Model files from cgan_compact_20260202.zip
+    "model_folder": _os.path.join(_SCRIPT_DIR, "cgan_compact_20260202/logfile_gefs_v3/"),
     "checkpoint": 345600,
-    # Raw NetCDF from zarr_to_raw_netcdf.py
-    "input_folder": "/home/roller/Documents/08-2023/working_notes_jupyter/ignore_nka_gitrepos/nka-gik/cgan_raw_netcdf/",
-    "constants_path": "/home/roller/cgan_gefs_forecast/CONSTANTS/",
-    # Output to different folder for comparison
-    "output_folder": "/home/roller/Documents/08-2023/working_notes_jupyter/ignore_nka_gitrepos/nka-gik/cgan_output_raw/",
+    # Raw NetCDF from GIK pipeline (stream_gefs_for_cgan.py + zarr_to_raw_netcdf.py)
+    "input_folder": _os.path.join(_SCRIPT_DIR, "gik_cgan_pipeline_output/netcdf/"),
+    "constants_path": _os.path.join(_SCRIPT_DIR, "cgan_compact_20260202/CONSTANTS/"),
+    # Output folder
+    "output_folder": _os.path.join(_SCRIPT_DIR, "cgan_output/"),
     "dates": ["2025-09-18"],
     "start_hour": 30,
     "end_hour": 54,
     "ensemble_members": 50,
     "normalization_mode": "gefs",
-    "gefs_norm_file": "/home/roller/cgan_gefs_forecast/CONSTANTS/FCSTNorm_GEFS_2018.pkl",
+    "gefs_norm_file": _os.path.join(_SCRIPT_DIR, "cgan_compact_20260202/CONSTANTS/FCSTNorm_GEFS_2018.pkl"),
 }
 
 # Field definitions

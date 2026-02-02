@@ -52,9 +52,11 @@ warnings.filterwarnings('ignore')
 TEMPLATE_URL = "https://huggingface.co/datasets/Nishadhka/gfs_s3_gik_refs/resolve/main/gik-fmrc-gefs-20241112.tar.gz"
 DEFAULT_TEMPLATE_FILE = "gik-fmrc-gefs-20241112.tar.gz"
 
-# cGAN model paths (defaults - override via args)
-DEFAULT_MODEL_FOLDER = "/home/roller/cgan_gefs_forecast/logfile_gefs_v3/"
-DEFAULT_CONSTANTS_PATH = "/home/roller/cgan_gefs_forecast/CONSTANTS/"
+# cGAN model paths - use relative paths from script directory
+# Model files should be extracted from cgan_compact_20260202.zip
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in dir() else '.'
+DEFAULT_MODEL_FOLDER = os.path.join(_SCRIPT_DIR, "cgan_compact_20260202/logfile_gefs_v3/")
+DEFAULT_CONSTANTS_PATH = os.path.join(_SCRIPT_DIR, "cgan_compact_20260202/CONSTANTS/")
 DEFAULT_CHECKPOINT = 345600
 
 # Ensemble configuration
