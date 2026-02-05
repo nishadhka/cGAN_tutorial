@@ -15,3 +15,10 @@ __pycache__/
 # Environment files
 .env
 *.env
+
+# Large data files
+*.nc
+*.h5
+*.pkl
+*.parquet
+*.zarr/
