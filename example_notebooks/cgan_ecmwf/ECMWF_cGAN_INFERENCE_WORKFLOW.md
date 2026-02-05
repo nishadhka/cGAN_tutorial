@@ -648,5 +648,224 @@ python run_forecast.py --accumulation 6h --date 20260106 --time 0000
 
 ---
 
+## Performance Benchmarks
+
+### Current Sequential Processing Times (2026-02-05)
+
+**Phase 1: GIK Parquet Creation**
+| Stage | Time | Notes |
+|-------|------|-------|
+| Stage 1 (GRIB scanning) | ~90 min | Per date, 51 members, limited hours |
+| Stage 2 (Index processing) | ~5 min | Uses pre-built templates |
+| Stage 3 (Final parquet) | ~2 min | Fast merge operation |
+| **Total Phase 1** | **~100 min** | One-time per date |
+
+**Phase 2: Data Streaming for cGAN**
+| Configuration | Time | Notes |
+|---------------|------|-------|
+| 5 members, 9 timesteps | 27 min | Test configuration |
+| 51 members, 9 timesteps | **240 min (4 hours)** | Production configuration |
+| 51 members, 12 variables | ~14,445 seconds | Full 12-variable extraction |
+
+**Bottleneck Analysis:**
+- Sequential S3 fetches dominate: ~4.7 seconds per member per variable per timestep
+- Total fetch operations: 51 members × 12 variables × 9 timesteps = 5,508 fetches
+- Network latency to ECMWF S3 is the primary constraint
+
+---
+
+## Future: Dask/Coiled Parallelization Plan
+
+### Problem Statement
+
+The current sequential data streaming takes **~4 hours** for 51 ensemble members, which is too slow for operational forecasting that requires daily updates.
+
+### Proposed Solution: Dask + Coiled
+
+Use Dask for parallel processing and Coiled for managed cloud compute to reduce streaming time from 4 hours to ~15-30 minutes.
+
+### Architecture
+
+```
+                                    ┌─────────────────────────┐
+                                    │   Coiled Cluster        │
+                                    │   (20-50 workers)       │
+┌──────────────┐                    │                         │
+│ Local Client │ ───Dask Tasks───▶ │  ┌─────┐ ┌─────┐       │
+│              │                    │  │ W1  │ │ W2  │ ...   │
+└──────────────┘                    │  └──┬──┘ └──┬──┘       │
+       │                            │     │       │          │
+       │                            │     ▼       ▼          │
+       │                            │  ┌─────────────────┐   │
+       │                            │  │  ECMWF S3       │   │
+       │                            │  │  (Parallel      │   │
+       │                            │  │   Fetches)      │   │
+       │                            │  └─────────────────┘   │
+       │                            └─────────────────────────┘
+       │                                       │
+       │                                       │
+       ▼                                       ▼
+┌──────────────┐                    ┌──────────────────┐
+│ Aggregated   │ ◀──────────────── │ Worker Results   │
+│ NetCDF       │                    │ (partial arrays) │
+└──────────────┘                    └──────────────────┘
+```
+
+### Implementation Plan
+
+#### Step 1: Refactor for Dask Delayed
+
+```python
+import dask
+from dask import delayed
+from dask.distributed import Client
+import coiled
+
+@delayed
+def fetch_and_decode_chunk(parquet_path, var_name, step, member_name):
+    """Fetch and decode a single GRIB chunk."""
+    # Read parquet references
+    # Fetch GRIB bytes from S3
+    # Decode with gribberish
+    # Return subset array
+    pass
+
+def stream_with_dask(parquet_dir, variables, steps, members):
+    """Create Dask task graph for parallel streaming."""
+    tasks = []
+    for var in variables:
+        for step in steps:
+            for member in members:
+                task = fetch_and_decode_chunk(
+                    parquet_dir / f"stage3_{member}_final.parquet",
+                    var, step, member
+                )
+                tasks.append(task)
+
+    # Compute all tasks in parallel
+    results = dask.compute(*tasks)
+    return results
+```
+
+#### Step 2: Coiled Cluster Setup
+
+```python
+import coiled
+
+# Create cluster with appropriate resources
+cluster = coiled.Cluster(
+    name="ecmwf-cgan-streaming",
+    n_workers=30,
+    worker_cpu=2,
+    worker_memory="8 GiB",
+    region="eu-west-1",  # Close to ECMWF S3
+    software="icpac/gik-cgan",  # Custom software environment
+)
+
+client = Client(cluster)
+```
+
+#### Step 3: Optimized Parallel Workflow
+
+```python
+def parallel_cgan_streaming(parquet_dir, date_str, run_hour):
+    """Parallel streaming using Dask/Coiled."""
+
+    # Create Coiled cluster
+    cluster = coiled.Cluster(n_workers=30)
+    client = Client(cluster)
+
+    # Distribute parquet references to workers
+    parquet_files = scatter_parquet_refs(parquet_dir)
+
+    # Create parallel tasks for all member-variable combinations
+    # Each worker handles ~2 members worth of data
+    futures = []
+    for member_batch in chunk_members(range(51), batch_size=2):
+        future = client.submit(
+            stream_member_batch,
+            parquet_files,
+            member_batch,
+            CGAN_VARIABLES,
+            TARGET_STEPS
+        )
+        futures.append(future)
+
+    # Gather results and aggregate
+    results = client.gather(futures)
+
+    # Compute ensemble statistics
+    ensemble_mean, ensemble_std = aggregate_results(results)
+
+    # Save to NetCDF
+    save_cgan_netcdf(ensemble_mean, ensemble_std, date_str, run_hour)
+
+    cluster.close()
+```
+
+### Expected Performance Improvements
+
+| Metric | Sequential | Dask/Coiled (30 workers) | Speedup |
+|--------|------------|--------------------------|---------|
+| Total Time | 240 min | ~15-20 min | **12-16x** |
+| S3 Fetches/sec | ~1.3 | ~40 | 30x |
+| Cost | Free | ~$2-3 per run | N/A |
+
+### Implementation Timeline
+
+1. **Week 1:** Refactor `stream_cgan_variables.py` with Dask delayed
+2. **Week 2:** Create Coiled software environment with dependencies
+3. **Week 3:** Test parallel streaming on small subset
+4. **Week 4:** Production deployment and monitoring
+
+### Alternative: AWS Batch/Lambda
+
+For users without Coiled access, consider:
+
+```python
+# AWS Lambda approach (free tier friendly)
+import boto3
+
+def lambda_handler(event, context):
+    """Lambda function to process single member."""
+    member = event['member']
+    variables = event['variables']
+    # Process and return results
+    pass
+
+# Invoke 51 Lambdas in parallel
+lambda_client = boto3.client('lambda')
+for member in range(51):
+    lambda_client.invoke_async(
+        FunctionName='ecmwf-cgan-streamer',
+        InvokeArgs={'member': member, 'variables': CGAN_VARS}
+    )
+```
+
+### Dependencies for Parallel Processing
+
+```bash
+# Dask ecosystem
+pip install dask[complete] distributed bokeh
+
+# Coiled (requires account)
+pip install coiled
+coiled login
+
+# Alternative: AWS
+pip install boto3 aioboto3
+```
+
+---
+
+## Next Steps
+
+1. **Immediate:** Use current sequential streaming for development/testing
+2. **Short-term:** Implement Dask delayed refactoring
+3. **Medium-term:** Deploy Coiled cluster for operational forecasting
+4. **Long-term:** Consider Zarr-based caching to avoid repeated S3 fetches
+
+---
+
 *Document generated for ICPAC SEWAA-Forecasts project*
-*Last updated: 2026-02-04*
+*Last updated: 2026-02-05*
