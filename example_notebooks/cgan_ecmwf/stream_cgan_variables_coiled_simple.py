@@ -9,11 +9,11 @@ Reads parquet files from GCS so Coiled workers can access them.
 Usage:
     # Test mode with GCS parquets
     python stream_cgan_variables_coiled_simple.py --test \
-        --gcs-parquet-path gs://gik-fmrc/run_par_ecmwf/20260203_00z
+        --gcs-parquet-path gs://gik-ecmwf-aws-tf/run_par_ecmwf/20260206_00z
 
     # Full run
     python stream_cgan_variables_coiled_simple.py \
-        --gcs-parquet-path gs://gik-fmrc/run_par_ecmwf/20260203_00z \
+        --gcs-parquet-path gs://gik-ecmwf-aws-tf/run_par_ecmwf/20260206_00z \
         --n-workers 20
 
 Author: ICPAC GIK Team
@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 
 # Can be local path or GCS path (gs://bucket/prefix/date_runz)
-DEFAULT_GCS_PARQUET_PATH = os.environ.get('GCS_PARQUET_PATH', 'gs://gik-ecmwf-aws-tf/run_par_ecmwf/20260203_00z')
+DEFAULT_GCS_PARQUET_PATH = os.environ.get('GCS_PARQUET_PATH', 'gs://gik-ecmwf-aws-tf/run_par_ecmwf/20260206_00z')
 DEFAULT_PARQUET_DIR = Path("ecmwf_three_stage_20260203_00z")
 TARGET_STEPS = [36, 39, 42, 45, 48, 51, 54, 57, 60]
 
@@ -585,11 +585,11 @@ if __name__ == "__main__":
 Examples:
     # Test with GCS parquets (recommended)
     python stream_cgan_variables_coiled_simple.py --test \\
-        --gcs-parquet-path gs://gik-fmrc/run_par_ecmwf/20260203_00z
+        --gcs-parquet-path gs://gik-ecmwf-aws-tf/run_par_ecmwf/20260206_00z
 
     # Full production run
     python stream_cgan_variables_coiled_simple.py \\
-        --gcs-parquet-path gs://gik-fmrc/run_par_ecmwf/20260203_00z \\
+        --gcs-parquet-path gs://gik-ecmwf-aws-tf/run_par_ecmwf/20260206_00z \\
         --n-workers 20
         """
     )
