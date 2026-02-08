@@ -263,6 +263,17 @@ def subset_to_icpac(data: np.ndarray) -> np.ndarray:
 # VARIABLE STREAMING
 # ==============================================================================
 
+def _fetch_decode_one_chunk(step, var_name, ref, fs):
+    """Fetch and decode a single GRIB chunk from S3. Thread-safe."""
+    try:
+        grib_bytes, _ = fetch_grib_bytes(ref, fs)
+        array_2d = decode_grib_bytes(grib_bytes)
+        subset = subset_to_icpac(array_2d)
+        return step, subset.astype(np.float32), None
+    except Exception as e:
+        return step, None, str(e)
+
+
 def stream_variable_for_member(
     parquet_path: str,
     var_name: str,
@@ -276,6 +287,7 @@ def stream_variable_for_member(
     Stream a single variable for one member across timesteps.
 
     Returns (data_array, valid_steps) where data_array is (n_steps, lat, lon).
+    S3 fetches for the 9 timesteps run in parallel using threads.
     """
     zstore = read_parquet_refs(parquet_path)
 
@@ -288,25 +300,39 @@ def stream_variable_for_member(
     if not chunks:
         return None, []
 
-    # Fetch and decode
+    # Fetch and decode — parallel S3 fetches across timesteps
     n_lats = len(ICPAC_LATS)
     n_lons = len(ICPAC_LONS)
     data = np.full((len(step_hours), n_lats, n_lons), np.nan, dtype=np.float32)
     valid_steps = []
 
-    for step, key, ref in chunks:
-        try:
-            grib_bytes, _ = fetch_grib_bytes(ref, fs)
-            array_2d = decode_grib_bytes(grib_bytes)
-            subset = subset_to_icpac(array_2d)
-
-            step_idx = step_hours.index(step)
-            data[step_idx] = subset.astype(np.float32)
-            valid_steps.append(step)
-        except Exception as e:
-            print(f"    Warning: Failed to decode {var_name} at step {step}: {e}")
+    with ThreadPoolExecutor(max_workers=min(len(chunks), MAX_PARALLEL_FETCHES)) as pool:
+        futures = {
+            pool.submit(_fetch_decode_one_chunk, step, var_name, ref, fs): step
+            for step, key, ref in chunks
+        }
+        for future in as_completed(futures):
+            step, subset, error = future.result()
+            if error:
+                print(f"    Warning: Failed to decode {var_name} at step {step}: {error}")
+            elif subset is not None:
+                step_idx = step_hours.index(step)
+                data[step_idx] = subset
+                valid_steps.append(step)
 
     return data, valid_steps
+
+
+def _stream_one_member(args):
+    """Worker: stream one variable for one member. Each thread gets its own S3 session."""
+    parquet_path, var_name, step_hours, member_key, is_pressure_level, pressure_level = args
+    fs = fsspec.filesystem('s3', anon=True)
+    return stream_variable_for_member(
+        parquet_path, var_name, step_hours, fs,
+        member_name=member_key,
+        is_pressure_level=is_pressure_level,
+        pressure_level=pressure_level
+    )
 
 
 def stream_all_members_for_variable(
@@ -316,10 +342,14 @@ def stream_all_members_for_variable(
     output_name: str,
     is_pressure_level: bool = False,
     pressure_level: int = 700,
-    max_members: int = 51
+    max_members: int = 51,
+    parallel_members: int = MAX_PARALLEL_FETCHES
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], List[int]]:
     """
-    Stream a variable across all ensemble members.
+    Stream a variable across all ensemble members in parallel.
+
+    Uses ThreadPoolExecutor to process `parallel_members` members concurrently.
+    Each member's S3 fetches also run in parallel threads.
 
     Returns (ensemble_mean, ensemble_std, valid_steps).
     """
@@ -335,38 +365,45 @@ def stream_all_members_for_variable(
     n_lats = len(ICPAC_LATS)
     n_lons = len(ICPAC_LONS)
 
-    print(f"    Members: {n_members}, Steps: {step_hours}")
+    print(f"    Members: {n_members}, Steps: {step_hours}, Parallel: {parallel_members}")
 
     # Accumulate data for ensemble statistics
     all_data = np.full((n_members, n_steps, n_lats, n_lons), np.nan, dtype=np.float32)
-
-    fs = fsspec.filesystem('s3', anon=True)
     valid_steps = []
 
-    for m_idx, pf in enumerate(parquet_files):
-        # Extract member name from filename: stage3_control_final.parquet -> control
-        # or stage3_ens_01_final.parquet -> ens01
+    # Build args for each member
+    member_args = []
+    for pf in parquet_files:
         raw_member = pf.stem.replace('stage3_', '').replace('_final', '')
-        # Convert ens_01 -> ens01 for key lookup
         member_key = raw_member.replace('_', '')
+        member_args.append((
+            str(pf), var_name, step_hours, member_key,
+            is_pressure_level, pressure_level
+        ))
 
-        data, steps = stream_variable_for_member(
-            str(pf), var_name, step_hours, fs,
-            member_name=member_key,
-            is_pressure_level=is_pressure_level,
-            pressure_level=pressure_level
-        )
+    # Parallel member processing
+    completed = 0
+    with ThreadPoolExecutor(max_workers=parallel_members) as pool:
+        future_to_idx = {
+            pool.submit(_stream_one_member, args): m_idx
+            for m_idx, args in enumerate(member_args)
+        }
+        for future in as_completed(future_to_idx):
+            m_idx = future_to_idx[future]
+            try:
+                data, steps = future.result()
+                if data is not None:
+                    all_data[m_idx] = data
+                    if not valid_steps:
+                        valid_steps = steps
+            except Exception as e:
+                print(f"    Warning: Member {m_idx} failed: {e}")
 
-        if data is not None:
-            all_data[m_idx] = data
-            if not valid_steps:
-                valid_steps = steps
-
-            if (m_idx + 1) % 10 == 0:
-                print(f"    Processed {m_idx + 1}/{n_members} members")
+            completed += 1
+            if completed % 10 == 0:
+                print(f"    Processed {completed}/{n_members} members")
 
     # Calculate ensemble statistics
-    # Mask out NaN values
     valid_mask = ~np.all(np.isnan(all_data), axis=0)
 
     if not np.any(valid_mask):
@@ -474,7 +511,8 @@ def main(
     parquet_dir: Path = PARQUET_DIR,
     target_steps: List[int] = TARGET_STEPS,
     max_members: int = 51,
-    output_dir: Path = OUTPUT_DIR
+    output_dir: Path = OUTPUT_DIR,
+    parallel_members: int = MAX_PARALLEL_FETCHES
 ):
     """Main streaming routine."""
     print("="*70)
@@ -483,6 +521,7 @@ def main(
     print(f"Parquet Directory: {parquet_dir}")
     print(f"Target Steps: {target_steps}")
     print(f"Max Members: {max_members}")
+    print(f"Parallel Members: {parallel_members}")
     print(f"ICPAC Region: {len(ICPAC_LATS)} x {len(ICPAC_LONS)} grid points")
     print(f"Gribberish Available: {GRIBBERISH_AVAILABLE}")
     print("="*70)
@@ -513,7 +552,8 @@ def main(
     for ecmwf_var, output_var in CGAN_SURFACE_VARS.items():
         mean, std, steps = stream_all_members_for_variable(
             parquet_dir, ecmwf_var, target_steps, output_var,
-            max_members=max_members
+            max_members=max_members,
+            parallel_members=parallel_members
         )
         if mean is not None:
             data_dict[output_var] = (mean, std)
@@ -524,7 +564,8 @@ def main(
     for ecmwf_var, output_var in CGAN_ATMOS_VARS.items():
         mean, std, steps = stream_all_members_for_variable(
             parquet_dir, ecmwf_var, target_steps, output_var,
-            max_members=max_members
+            max_members=max_members,
+            parallel_members=parallel_members
         )
         if mean is not None:
             data_dict[output_var] = (mean, std)
@@ -537,7 +578,8 @@ def main(
             parquet_dir, ecmwf_var, target_steps, output_var,
             is_pressure_level=True,
             pressure_level=TARGET_PRESSURE_LEVEL,
-            max_members=max_members
+            max_members=max_members,
+            parallel_members=parallel_members
         )
         if mean is not None:
             data_dict[output_var] = (mean, std)
@@ -593,6 +635,8 @@ if __name__ == "__main__":
                         help='Maximum number of ensemble members')
     parser.add_argument('--output-dir', type=str, default=str(OUTPUT_DIR),
                         help='Output directory for NetCDF file')
+    parser.add_argument('--parallel-fetches', type=int, default=MAX_PARALLEL_FETCHES,
+                        help=f'Number of concurrent member streams (default: {MAX_PARALLEL_FETCHES})')
 
     args = parser.parse_args()
 
@@ -602,7 +646,8 @@ if __name__ == "__main__":
         parquet_dir=Path(args.parquet_dir),
         target_steps=steps,
         max_members=args.max_members,
-        output_dir=Path(args.output_dir)
+        output_dir=Path(args.output_dir),
+        parallel_members=args.parallel_fetches
     )
 
     if success:
