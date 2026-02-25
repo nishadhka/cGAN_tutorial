@@ -1,4 +1,32 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = "==3.11.*"
+# dependencies = [
+#     "tensorflow==2.15",
+#     "numpy<2.0",
+#     "numba",
+#     "matplotlib",
+#     "seaborn",
+#     "cartopy",
+#     "jupyter",
+#     "xarray",
+#     "netcdf4",
+#     "scikit-learn",
+#     "cfgrib",
+#     "dask",
+#     "tqdm",
+#     "properscoring",
+#     "climlab",
+#     "scitools-iris",
+#     "ecmwf-api-client",
+#     "xesmf",
+#     "flake8",
+#     "regionmask",
+#     "schedule",
+#     "pyyaml",
+#     "cftime",
+# ]
+# ///
 """
 cGAN GEFS Inference Script - Raw NetCDF Method
 ===============================================
@@ -12,7 +40,7 @@ Input format:
 
 Usage:
 ------
-    micromamba run -n tf215gpu python run_gefs_inference_raw.py
+    uv run run_gefs_inference_raw.py
 """
 
 import sys
@@ -60,7 +88,7 @@ CONFIG = {
 # Field definitions
 HOURS = 6
 all_fcst_fields = ["cape", "pres", "pwat", "tmp", "ugrd", "vgrd", "msl", "apcp"]
-nonnegative_fields = ["cape", "pwat", "apcp"]
+nonnegative_fields = ["cape", "msl", "pres", "pwat", "tmp"]
 
 # ICPAC region coordinates
 latitude = np.arange(-13.65, 24.7, 0.1)
@@ -326,6 +354,7 @@ def load_hires_constants(constants_path, batch_size=1):
     lsm_var = list(lsm.data_vars)[0]
 
     elev_data = elev[elev_var].values
+    elev_data = elev_data / 10000.0  # Normalise elevation (metres) to O(1)
     lsm_data = lsm[lsm_var].values
 
     constants = np.stack([elev_data, lsm_data], axis=-1)
@@ -336,10 +365,8 @@ def load_hires_constants(constants_path, batch_size=1):
 
 
 def denormalise(data):
-    """Convert from log-space to mm/h with capping to avoid overflow."""
-    data_capped = np.minimum(data, 10.0)
-    result = np.power(10.0, data_capped) - 1.0
-    return np.minimum(np.maximum(result, 0.0), 100.0)
+    """Convert from log-space to mm/h, capped at 100 mm/h."""
+    return np.minimum(np.power(10.0, data) - 1.0, 100.0)
 
 
 class NoiseGenerator:

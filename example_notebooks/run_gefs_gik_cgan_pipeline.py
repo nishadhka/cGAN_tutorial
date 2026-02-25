@@ -1,4 +1,43 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = "==3.11.*"
+# dependencies = [
+#     "tensorflow==2.15",
+#     "numpy<2.0",
+#     "numba",
+#     "matplotlib",
+#     "seaborn",
+#     "cartopy",
+#     "jupyter",
+#     "xarray",
+#     "netcdf4",
+#     "scikit-learn",
+#     "cfgrib",
+#     "dask",
+#     "tqdm",
+#     "properscoring",
+#     "climlab",
+#     "scitools-iris",
+#     "ecmwf-api-client",
+#     "xesmf",
+#     "flake8",
+#     "regionmask",
+#     "schedule",
+#     "kerchunk",
+#     "zarr",
+#     "pandas",
+#     "fsspec",
+#     "s3fs",
+#     "gcsfs",
+#     "google-cloud-storage",
+#     "google-auth",
+#     "distributed",
+#     "requests",
+#     "pyyaml",
+#     "cftime",
+#     "pyarrow",
+# ]
+# ///
 """
 GEFS GIK-cGAN Unified Pipeline
 ==============================
@@ -14,14 +53,7 @@ Pipeline Stages:
     5. Run cGAN inference to produce high-resolution precipitation
 
 Usage:
-    python run_gefs_gik_cgan_pipeline.py --date 20250918 --output_dir gik_cgan_output
-
-Prerequisites:
-    # GIK dependencies
-    pip install kerchunk zarr xarray pandas numpy fsspec s3fs gribberish requests
-
-    # cGAN dependencies
-    pip install tensorflow numpy<2.0 netCDF4 pyyaml
+    uv run run_gefs_gik_cgan_pipeline.py --date 20250918 --output_dir gik_cgan_output
 
 Author: ICPAC GIK-cGAN Integration Team
 """
