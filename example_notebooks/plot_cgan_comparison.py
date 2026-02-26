@@ -31,12 +31,12 @@ import cartopy.feature as cfeature
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Input GEFS data (from pipeline Stage 4)
-INPUT_DIR = os.path.join(_SCRIPT_DIR, "gik_cgan_output/netcdf/2025")
-INPUT_FILE = os.path.join(INPUT_DIR, "apcp_2025.nc")
+INPUT_DIR = os.path.join(_SCRIPT_DIR, "gik_cgan_output/netcdf/2024")
+INPUT_FILE = os.path.join(INPUT_DIR, "apcp_2024.nc")
 
 # cGAN output (from pipeline Stage 5)
-OUTPUT_DIR = os.path.join(_SCRIPT_DIR, "gik_cgan_output/cgan_output/2025")
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, "GAN_20250918.nc")
+OUTPUT_DIR = os.path.join(_SCRIPT_DIR, "gik_cgan_output/cgan_output/2024")
+OUTPUT_FILE = os.path.join(OUTPUT_DIR, "GAN_20240525.nc")
 
 # ICPAC region
 LAT_MIN, LAT_MAX = -13.65, 24.65
@@ -69,11 +69,9 @@ def load_input_data():
     # Select first member
     if 'member' in data.dims:
         data = data.isel(member=0)
-    # Select step ~30h (index 10 for 3-hourly, or 30 for hourly)
+    # Select first available step (closest to +30h)
     if 'step' in data.dims:
-        n_steps = data.sizes['step']
-        step_idx = min(10, n_steps - 1)  # 3-hourly -> step 10 = 30h
-        data = data.isel(step=step_idx)
+        data = data.isel(step=0)
 
     print(f"  Selected shape: {data.shape}")
     return data.values, lats, lons
@@ -164,11 +162,11 @@ def plot_comparison():
     if cb:
         cb.set_label('Precipitation (mm/h)', fontsize=12)
 
-    fig.suptitle('GEFS vs cGAN Precipitation - 2025-09-18 (+30h forecast)',
+    fig.suptitle('GEFS vs cGAN Precipitation - 2024-05-25 (+30h forecast)',
                  fontsize=16, y=0.98)
     plt.tight_layout(rect=[0, 0.08, 1, 0.95])
 
-    out_path = os.path.join(_SCRIPT_DIR, "cgan_comparison_20250918.png")
+    out_path = os.path.join(_SCRIPT_DIR, "cgan_comparison_20240525.png")
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
     print(f"\nPlot saved: {out_path}")
     plt.close()

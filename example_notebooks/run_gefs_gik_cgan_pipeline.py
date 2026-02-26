@@ -94,6 +94,26 @@ DEFAULT_CHECKPOINT = 345600
 # Ensemble configuration
 DEFAULT_ENSEMBLE_MEMBERS = 30
 FORECAST_HOURS = (30, 54)  # Start and end hours for cGAN inference
+CGAN_HOURS = 6  # cGAN time aggregation window
+
+
+def compute_cgan_step_indices(start_hour=30, end_hour=54, hours=6):
+    """Compute the GEFS step indices needed by cGAN inference.
+
+    The inference code selects pairs of steps for each valid time:
+        hour_idx_1 = valid_time - 1
+        hour_idx_2 = valid_time + hours - 1
+
+    Returns sorted list of unique step indices.
+    """
+    valid_times = np.arange(start_hour, end_hour + 1, hours)
+    n_valid = end_hour // hours - start_hour // hours
+    needed = set()
+    for i in range(n_valid):
+        vt = valid_times[i]
+        needed.add(vt - 1)
+        needed.add(vt + hours - 1)
+    return sorted(needed)
 
 # Region (ICPAC East Africa)
 REGION = {
@@ -272,9 +292,14 @@ def stream_gefs_data(
     output_dir: Path,
     target_date: str,
     target_run: str,
-    max_members: Optional[int] = None
+    max_members: Optional[int] = None,
+    step_filter: Optional[set] = None
 ) -> bool:
-    """Stream GEFS data using the parquet references."""
+    """Stream GEFS data using the parquet references.
+
+    Args:
+        step_filter: Optional set of step indices to stream (None = all).
+    """
     # Import the streaming module
     script_dir = Path(__file__).parent
     sys.path.insert(0, str(script_dir))
@@ -313,16 +338,30 @@ def stream_gefs_data(
         chunks = discover_variable_chunks(zstore, var_config['gefs_prefix'])
         if chunks:
             n_timesteps = len(chunks)
-            print(f"  Timesteps: {n_timesteps} (from {var_name})")
+            print(f"  Total available timesteps: {n_timesteps} (from {var_name})")
             break
+
+    # When step_filter is active, zarr only needs the filtered count
+    if step_filter:
+        step_indices = sorted(step_filter)
+        n_zarr_steps = len(step_indices)
+        print(f"  Filtering to {n_zarr_steps} steps: {step_indices}")
+    else:
+        n_zarr_steps = n_timesteps
 
     # Create zarr store
     zarr_output = output_dir / f"zarr_{target_date}_{target_run}z"
-    zarr_store, _ = create_cgan_zarr_store(zarr_output, n_members, n_timesteps)
+    zarr_store, _ = create_cgan_zarr_store(zarr_output, n_members, n_zarr_steps)
+
+    # Store step filter metadata for Stage 4 (plain ints for JSON serialization)
+    if step_filter:
+        zarr_store.attrs['step_indices'] = [int(s) for s in step_indices]
 
     # Stream all members
     for member_idx, pf in enumerate(parquet_files):
-        stream_all_variables_for_member(str(pf), zarr_store, member_idx)
+        stream_all_variables_for_member(
+            str(pf), zarr_store, member_idx, step_filter=step_filter
+        )
 
     print(f"  Output: {zarr_output}")
     return True
@@ -368,9 +407,14 @@ def convert_zarr_to_netcdf(
     members = store['member'][:]
     n_timesteps = store.attrs.get('n_timesteps', 81)
 
-    # Create step coordinate (3-hour intervals)
-    step_hours = np.arange(0, n_timesteps * 3, 3)
-    step_ns = step_hours * 3.6e12  # Convert to nanoseconds
+    # Step coordinate: use original step indices if available (filtered mode),
+    # otherwise sequential integers 0..n-1
+    step_indices_meta = store.attrs.get('step_indices', None)
+    if step_indices_meta is not None:
+        step_coord = np.array(step_indices_meta, dtype=np.int64)
+        print(f"  Using filtered step indices: {list(step_coord)}")
+    else:
+        step_coord = np.arange(n_timesteps, dtype=np.int64)
 
     # Parse init time
     init_time = datetime.strptime(target_date, '%Y%m%d')
@@ -398,7 +442,7 @@ def convert_zarr_to_netcdf(
             coords={
                 'time': [np.datetime64(init_time)],
                 'member': members,
-                'step': step_ns,
+                'step': step_coord,
                 'latitude': lats,
                 'longitude': lons,
             }
@@ -547,6 +591,8 @@ Examples:
                        help=f'cGAN checkpoint number (default: {DEFAULT_CHECKPOINT})')
     parser.add_argument('--netcdf_dir', type=str, default=None,
                        help='Pre-existing NetCDF directory (for stage 5 only)')
+    parser.add_argument('--cgan_steps_only', action='store_true',
+                       help='Only stream the timesteps needed for cGAN inference (5 of 81, ~93%% faster)')
 
     args = parser.parse_args()
 
@@ -560,6 +606,14 @@ Examples:
     # Ensemble members
     ensemble_members = [f'gep{i:02d}' for i in range(1, args.max_members + 1)]
 
+    # Compute step filter if requested
+    step_filter = None
+    if args.cgan_steps_only:
+        step_indices = compute_cgan_step_indices(
+            FORECAST_HOURS[0], FORECAST_HOURS[1], CGAN_HOURS
+        )
+        step_filter = set(step_indices)
+
     print("="*70)
     print("GEFS GIK → cGAN Unified Pipeline")
     print("="*70)
@@ -568,6 +622,8 @@ Examples:
     print(f"Output Base: {output_base}")
     print(f"Stages: {stages}")
     print(f"Ensemble Members: {args.max_members}")
+    if step_filter:
+        print(f"Step Filter: {sorted(step_filter)} ({len(step_filter)} of 81 steps)")
     print("="*70)
 
     pipeline_start = time.time()
@@ -608,7 +664,8 @@ Examples:
         print("STAGE 3: Stream GEFS Multi-Variable Data")
         print("="*70)
         if not stream_gefs_data(
-            parquet_dir, output_base, target_date, target_run, args.max_members
+            parquet_dir, output_base, target_date, target_run, args.max_members,
+            step_filter=step_filter
         ):
             print("Stage 3 failed.")
             if 4 in stages:

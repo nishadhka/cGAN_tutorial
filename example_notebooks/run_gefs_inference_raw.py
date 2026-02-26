@@ -559,16 +559,18 @@ def run_inference():
                 nc_file = xr.open_dataset(nc_in_path)
                 nc_file = nc_file.sel({"time": day})
 
-                # Get step indices (hours 1-80, need indices for hour pairs)
-                # For forecast hour 30, need steps at hour 24 and 30
-                # in_time_idx = 5 (30//6) -> need steps 4 and 5 (indices 23 and 29)
-                # But our steps start at 1, so:
-                # For hours 30-36: steps at indices 29 and 35 (hour 30 and 36)
-                hour_idx_1 = valid_times[out_time_idx] - 1  # hour index (0-based from hour 1)
+                # Step indices for this valid time pair
+                hour_idx_1 = valid_times[out_time_idx] - 1
                 hour_idx_2 = valid_times[out_time_idx] + HOURS - 1
 
-                # Select two consecutive timesteps for this valid time
-                nc_file = nc_file.isel({"step": [hour_idx_1, hour_idx_2]})
+                # Select two timesteps: use sel (value-based) for integer step
+                # coordinates (supports both full 81-step and filtered datasets),
+                # fall back to isel (position-based) for legacy timedelta coords.
+                step_vals = nc_file.step.values
+                if np.issubdtype(step_vals.dtype, np.integer):
+                    nc_file = nc_file.sel({"step": [hour_idx_1, hour_idx_2]})
+                else:
+                    nc_file = nc_file.isel({"step": [hour_idx_1, hour_idx_2]})
 
                 short_name = [var for var in nc_file.data_vars][0]
 

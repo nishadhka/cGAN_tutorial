@@ -231,7 +231,8 @@ def stream_variable_for_member(
     var_config: Dict,
     zarr_store: zarr.Group,
     member_idx: int,
-    fs
+    fs,
+    step_filter: Optional[set] = None
 ) -> bool:
     """
     Stream a single variable for a single ensemble member.
@@ -243,6 +244,7 @@ def stream_variable_for_member(
         zarr_store: Zarr group to write data to
         member_idx: Index of this member in the zarr array
         fs: S3 filesystem instance
+        step_filter: Optional set of step indices to stream (None = all)
 
     Returns:
         True if successful, False otherwise
@@ -266,6 +268,10 @@ def stream_variable_for_member(
         if not chunks:
             print(f"      No chunks found for {var_name} (prefix: {path_prefix})")
             return False
+
+        # Filter to only needed step indices
+        if step_filter is not None:
+            chunks = [(si, ck) for si, ck in chunks if si in step_filter]
 
         n_timesteps = len(chunks)
 
@@ -294,10 +300,14 @@ def stream_variable_for_member(
 def stream_all_variables_for_member(
     parquet_path: str,
     zarr_store: zarr.Group,
-    member_idx: int
+    member_idx: int,
+    step_filter: Optional[set] = None
 ) -> Dict[str, bool]:
     """
     Stream all cGAN variables for a single ensemble member.
+
+    Args:
+        step_filter: Optional set of step indices to stream (None = all)
 
     Returns dict of variable -> success status
     """
@@ -312,7 +322,8 @@ def stream_all_variables_for_member(
     for var_name, var_config in CGAN_VARIABLES.items():
         print(f"    {var_name}...", end=' ', flush=True)
         success = stream_variable_for_member(
-            parquet_path, var_name, var_config, zarr_store, member_idx, fs
+            parquet_path, var_name, var_config, zarr_store, member_idx, fs,
+            step_filter=step_filter
         )
         results[var_name] = success
         status = "OK" if success else "FAILED"
