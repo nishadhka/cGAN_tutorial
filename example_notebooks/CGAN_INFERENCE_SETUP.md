@@ -1,395 +1,277 @@
-# cGAN Inference Setup and Technical Debt Documentation
+# cGAN Inference Setup Guide
 
 ## Overview
 
-This document details the required files, setup, and technical debt for running cGAN inference on GEFS (Global Ensemble Forecast System) data using the provided workflow.
+This document covers the end-to-end workflow for running cGAN precipitation
+downscaling on GEFS data using the GIK (Grib-Index-Kerchunk) pipeline. All
+scripts use **PEP 723 inline metadata** so they can be executed directly with
+[`uv run`](https://docs.astral.sh/uv/) — no manual environment setup required.
 
-## Inference Code Entry Point
+## Quick Start
+
+```bash
+# Full pipeline: GIK fetch -> Zarr -> NetCDF -> cGAN inference
+uv run run_gefs_gik_cgan_pipeline.py --date 20250918 --output_dir gik_cgan_output
+
+# Run inference only (if NetCDF inputs already exist)
+uv run run_gefs_inference_raw.py
+
+# Plot comparison of input vs output
+uv run plot_cgan_comparison.py
+
+# Run unit tests
+uv run --python 3.11 --with pytest --with "tensorflow==2.15" \
+    --with "numpy<2.0" --with xarray --with netcdf4 --with pyyaml \
+    --with cftime pytest test_cgan_inference.py -v
+```
+
+## Why `uv run`?
+
+The cGAN model requires **TensorFlow 2.15** which only supports Python 3.11.
+`uv` handles this automatically:
+
+- Reads PEP 723 `# /// script` metadata from each script
+- Downloads CPython 3.11 if not present
+- Resolves and installs all dependencies into an isolated environment
+- Caches the environment for fast subsequent runs
+
+No conda, micromamba, or virtualenv management needed.
+
+## Pipeline Stages
+
+The unified script `run_gefs_gik_cgan_pipeline.py` runs 5 stages sequentially:
+
+| Stage | Description | Output |
+|-------|-------------|--------|
+| 1 | Download GIK template from Hugging Face | `gik-fmrc-gefs-20241112.tar.gz` |
+| 2 | Create parquet references for target date | `gik_cgan_output/parquet_refs/` |
+| 3 | Stream GEFS variables from AWS S3 | `gik_cgan_output/zarr_YYYYMMDD_00z/` |
+| 4 | Convert Zarr to per-field NetCDF | `gik_cgan_output/netcdf/YYYY/` |
+| 5 | Run cGAN inference | `gik_cgan_output/cgan_output/YYYY/GAN_YYYYMMDD.nc` |
+
+### Running specific stages
+
+```bash
+# Only GIK reference creation (stages 1-2)
+uv run run_gefs_gik_cgan_pipeline.py --date 20250918 --stages 1,2
+
+# Only streaming + conversion (stages 3-4)
+uv run run_gefs_gik_cgan_pipeline.py --date 20250918 --stages 3,4
+
+# Only inference (stage 5), if NetCDF data already exists
+uv run run_gefs_gik_cgan_pipeline.py --date 20250918 --stages 5 \
+    --netcdf_dir gik_cgan_output/netcdf/2025
+
+# Fewer ensemble members for faster testing
+uv run run_gefs_gik_cgan_pipeline.py --date 20250918 --max_members 5
+```
+
+### CLI options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--date` | (required) | Forecast date `YYYYMMDD` |
+| `--run` | `00` | Model run hour |
+| `--output_dir` | `gik_cgan_pipeline_output` | Base output directory |
+| `--stages` | `1,2,3,4,5` | Comma-separated stages to run |
+| `--max_members` | `30` | Number of GEFS ensemble members to stream |
+| `--model_folder` | `cgan_compact_20260202/logfile_gefs_v3/` | Trained model path |
+| `--constants_path` | `cgan_compact_20260202/CONSTANTS/` | Constants directory |
+| `--checkpoint` | `345600` | Model checkpoint number |
+
+## Required Files
+
+### Pre-trained Model
+
+Extract from `cgan_compact_20260202.zip`:
+
+```
+cgan_compact_20260202/
+├── logfile_gefs_v3/
+│   ├── setup_params.yaml            # Architecture: forceconv, 128 filters, 4 noise channels
+│   └── models/
+│       └── gen_weights-0345600.h5   # Generator weights
+└── CONSTANTS/
+    ├── elev.nc                      # Elevation (metres, normalised /10000 at load time)
+    ├── lsm.nc                       # Land-sea mask (0-1)
+    ├── FCSTNorm2018.pkl             # IFS normalization stats
+    └── FCSTNorm_GEFS_2018.pkl       # Native GEFS normalization stats
+```
+
+### Input Forecast Data
+
+Produced by pipeline stages 1-4, or provide manually:
+
+```
+{input_folder}/YYYY/
+├── cape_YYYY.nc    # (time, member, step, latitude, longitude)
+├── pres_YYYY.nc
+├── pwat_YYYY.nc
+├── tmp_YYYY.nc
+├── ugrd_YYYY.nc
+├── vgrd_YYYY.nc
+├── msl_YYYY.nc
+└── apcp_YYYY.nc
+```
+
+Fields must be in this exact order for concatenation:
+**cape, pres, pwat, tmp, ugrd, vgrd, msl, apcp** (8 fields x 4 channels = 32 input channels).
+
+## Normalization Reference
+
+The following normalization must match the training code (`data/data_gefs.py`)
+exactly. Mismatches cause incorrect output (e.g., precipitation over ocean).
+
+### Field normalization
+
+| Field type | Fields | Method | Formula |
+|-----------|--------|--------|---------|
+| Precipitation | `apcp` | Log transform | `log10(1 + x)` |
+| Pressure/Temperature | `msl`, `pres`, `tmp` | Z-score | `(x - mean) / std` |
+| Non-negative bounded | `cape`, `pwat` | Max scaling | `x / max` |
+| Wind components | `ugrd`, `vgrd` | Symmetric max | `x / max(abs(min), abs(max))` |
+
+After normalization, ensemble mean and std are computed across members,
+producing 4 channels per field: `[mean_t1, std_t1, mean_t2, std_t2]`.
+
+### Non-negative fields
 
 ```python
-import os
-os.environ["TF_USE_LEGACY_KERAS"] = "1"  # Required for TensorFlow >= 2.16.0
-
-import sys
-sys.path.insert(1,"../scripts/")
-import forecast_gfs
-import importlib
-importlib.reload(forecast_gfs)
-
-forecast_gfs.make_fcst()
+nonnegative_fields = ['cape', 'msl', 'pres', 'pwat', 'tmp']
 ```
 
-## Required Files and Directory Structure
+These have `np.maximum(data, 0.0)` applied before normalization. Note that
+`msl`, `pres`, `tmp` are caught by the z-score branch (earlier in the
+if/elif chain) and `cape`, `pwat` fall through to the `/max` branch.
 
-### 1. Core Script Files
+**`apcp` is NOT in this list** — it uses `log10(1+x)` directly.
 
-```
-cGAN_tutorial/
-├── scripts/
-│   └── forecast_gfs.py           # Main inference script
-├── config/
-│   ├── forecast_gfs.yaml         # Inference configuration (in ../config/)
-│   ├── data_paths.yaml           # Data path configuration
-│   ├── local_config.yaml         # Local environment settings
-│   └── downscaling_factor.yaml   # Model architecture config
-├── data/
-│   └── data_gefs.py              # Data loading utilities
-├── model/
-│   ├── gan.py                    # GAN model definitions
-│   ├── models.py                 # Generator/Discriminator architectures
-│   ├── noise.py                  # Noise generation for ensemble members
-│   └── blocks.py, layers.py      # Network building blocks
-└── setupmodel.py                 # Model initialization utilities
-```
+### Constant fields
 
-### 2. Configuration Files
+| Field | Normalization | Notes |
+|-------|--------------|-------|
+| Elevation (`elev.nc`) | `/ 10000.0` | Raw metres to O(1) scale |
+| Land-sea mask (`lsm.nc`) | None (already 0-1) | Binary land/ocean |
 
-#### `forecast_gfs.yaml` (Main inference config)
-```yaml
-MODEL:
-    folder: "/path/to/trained/model/"    # Contains setup_params.yaml and models/
-    checkpoint: 345600                    # Checkpoint number to load
-
-INPUT:
-    folder: "/path/to/input/netcdf/"     # Input forecast data folder
-    dates: ["2024-04-20"]                # List of forecast dates
-    start_hour: 30                        # First forecast hour
-    end_hour: 54                          # Last forecast hour
-
-OUTPUT:
-    folder: "/path/to/output/"           # Output folder for predictions
-    ensemble_members: 50                  # Number of ensemble members to generate
-```
-
-#### `data_paths.yaml`
-Must contain paths for the environment specified in `local_config.yaml`:
-```yaml
-ICPAC_CLOUD:  # or your environment name
-    GENERAL:
-        TRUTH_PATH: "/path/to/truth/data/"
-        FORECAST_PATH: "/path/to/forecast/data/"
-        CONSTANTS_PATH_GEFS: "/path/to/constants/"
-    TFRecords:
-        tfrecords_path: "/path/to/tfrecords/"
-```
-
-#### `local_config.yaml`
-```yaml
-data_paths: "ICPAC_CLOUD"      # Must match key in data_paths.yaml
-gpu_mem_incr: True              # Incremental GPU memory allocation
-use_gpu: True                   # Enable GPU usage
-disable_tf32: False             # TensorFloat-32 setting
-```
-
-#### `downscaling_factor.yaml`
-```yaml
-downscaling_factor: 1
-steps: [1]  # Must multiply to downscaling_factor
-```
-
-### 3. Required Data Files
-
-#### Input Forecast Data (NetCDF)
-Located in `INPUT.folder/YYYY/`:
-```
-{field}_YYYY.nc  # One file per field per year
-```
-
-Fields required (from `data_gefs.py:25`):
-- `cape` - Convective Available Potential Energy
-- `pres` - Pressure
-- `pwat` - Precipitable Water
-- `tmp` - Temperature
-- `ugrd` - U-component of wind
-- `vgrd` - V-component of wind
-- `msl` - Mean Sea Level Pressure
-- `apcp` - Accumulated Precipitation
-
-#### Constants Data
-Located in `CONSTANTS_PATH_GEFS`:
-- `elev.nc` - Elevation/orography data
-- `lsm.nc` - Land-sea mask
-- `FCSTNorm2018.pkl` - Normalization statistics (generated via `gen_fcst_norm()`)
-
-#### Pre-trained Model
-Located in `MODEL.folder`:
-```
-setup_params.yaml               # Model architecture config
-models/
-    └── gen_weights-XXXXXXX.h5  # Generator weights checkpoint
-```
-
-### 4. Python Dependencies
-
-**Core Dependencies:**
-- TensorFlow (2.x with Keras support)
-- NumPy
-- xarray
-- netCDF4
-- cftime
-- h5py (for IMERG data handling)
-- PyYAML
-- xesmf (for regridding operations)
-
-**Environment Variable:**
-```python
-os.environ["TF_USE_LEGACY_KERAS"] = "1"  # For TensorFlow >= 2.16.0
-```
-
-## Technical Debt and Issues
-
-### 1. **Hard-coded Geographic Region** 🔴 HIGH PRIORITY
-**Location:** `forecast_gfs.py:39-40`, `data_gefs.py:30-36`
+### Output denormalization
 
 ```python
-# Hard-coded ICPAC region coordinates
-latitude = np.arange(-13.65, 24.7, 0.1)
-longitude = np.arange(19.15, 54.3, 0.1)
+def denormalise(data):
+    return np.minimum(np.power(10.0, data) - 1.0, 100.0)
 ```
 
-**Issues:**
-- Geographic bounds are hard-coded for ICPAC region
-- Not generalizable to other regions
-- Coordinate information should be read from input files
+Inverse of `log10(1 + x)`, capped at 100 mm/h.
 
-**Fix:**
-- Extract lat/lon from input NetCDF files
-- Make region configurable via YAML
-- Add validation for coordinate consistency
+## Corrections Applied (Feb 2026)
 
-### 2. **Duplicate Normalization Logic** 🔴 HIGH PRIORITY
-**Location:** `forecast_gfs.py:224-252` vs `data_gefs.py:273-299`
+Three bugs in `run_gefs_inference_raw.py` caused the model to produce
+precipitation over ocean instead of over land:
 
-**Issues:**
-- Same normalization logic duplicated in two places
-- Difficult to maintain consistency
-- Violates DRY (Don't Repeat Yourself) principle
-
-**Fix:**
-```python
-# Consolidate into shared utility function
-from data.data_gefs import normalize_forecast_field
-
-def load_and_normalize_field(field, nc_file, in_time_idx, fcst_norm):
-    return normalize_forecast_field(field, nc_file, in_time_idx, fcst_norm)
-```
-
-### 3. **Path Management Issues** 🟡 MEDIUM PRIORITY
-**Location:** `forecast_gfs.py:50`, `data_gefs.py:16`
+### 1. Elevation not normalised (CRITICAL)
 
 ```python
-sys.path.insert(1,"../")  # Fragile relative path manipulation
+# BEFORE (bug): raw elevation in metres (0-5000)
+elev_data = elev[elev_var].values
+
+# AFTER (fix): normalised to O(0.1) matching training code
+elev_data = elev[elev_var].values
+elev_data = elev_data / 10000.0
 ```
 
-**Issues:**
-- Fragile relative paths depend on execution location
-- Makes code non-portable
-- Breaks when run from different directories
+The model was trained with elevation ~O(0.1), but received ~O(5000) during
+inference. This ~50,000x discrepancy in the topographic input was the primary
+cause of incorrect spatial patterns.
 
-**Fix:**
-- Use proper Python package structure
-- Install as editable package: `pip install -e .`
-- Use absolute imports with package namespace
-
-### 4. **Configuration File Redundancy** 🟡 MEDIUM PRIORITY
-**Location:** `example_notebooks/forecast_gfs.yaml` vs `config/forecast_gfs.yaml`
-
-**Issues:**
-- Two versions of same config file in different locations
-- Confusion about which one is used
-- Script looks in `../config/` but there's one in current dir
-
-**Fix:**
-- Use single config location (preferably `config/`)
-- Document config precedence clearly
-- Add config validation at startup
-
-### 5. **Environment Variable Requirement** 🟡 MEDIUM PRIORITY
-**Location:** Entry point code
+### 2. Wrong `nonnegative_fields` definition
 
 ```python
-os.environ["TF_USE_LEGACY_KERAS"] = "1"
+# BEFORE (bug):
+nonnegative_fields = ["cape", "pwat", "apcp"]
+
+# AFTER (fix): matches data/data_gefs.py line 26
+nonnegative_fields = ["cape", "msl", "pres", "pwat", "tmp"]
 ```
 
-**Issues:**
-- Must be set before TensorFlow import
-- Easy to forget or do incorrectly
-- Version-dependent workaround
-
-**Fix:**
-- Document TensorFlow version requirements clearly
-- Consider pinning TensorFlow < 2.16 if legacy Keras is required
-- Add startup validation to check environment
-
-### 6. **Magic Numbers and Assumptions** 🟡 MEDIUM PRIORITY
-**Location:** `forecast_gfs.py:217`, `data_gefs.py:28`
+### 3. Extra capping in `denormalise()`
 
 ```python
-nc_file.isel({"step":[in_time_idx-5,in_time_idx-4]})  # What are -5, -4?
-HOURS = 6  # Hard-coded temporal resolution
+# BEFORE: extra log-space cap not in training code
+data_capped = np.minimum(data, 10.0)
+result = np.power(10.0, data_capped) - 1.0
+return np.minimum(np.maximum(result, 0.0), 100.0)
+
+# AFTER: matches training code exactly
+return np.minimum(np.power(10.0, data) - 1.0, 100.0)
 ```
 
-**Issues:**
-- Magic numbers without explanation
-- Assumptions about data structure not validated
-- Time indexing logic is unclear
+## Unit Tests
 
-**Fix:**
-- Add comments explaining index offsets
-- Validate input file structure matches assumptions
-- Make temporal resolution configurable
+The file `test_cgan_inference.py` contains 34 pytest tests that validate
+all corrections and guard against regressions. Tests are organised into
+7 test classes:
 
-### 7. **Error Handling Gaps** 🟡 MEDIUM PRIORITY
-**Location:** Throughout `forecast_gfs.py`
+| Class | Tests | What it validates |
+|-------|-------|-------------------|
+| `TestFieldDefinitions` | 5 | Field order, nonnegative_fields matches training |
+| `TestNormalization` | 4 | Normalization branches, input channel count |
+| `TestElevationNormalization` | 4 | Elevation /10000 range, LSM [0,1], shape, dtype |
+| `TestDenormalise` | 7 | Inverse log transform, 100 mm/h cap, vectorisation |
+| `TestNormalizationStats` | 4 | GEFS norm pickle: fields present, plausible ranges |
+| `TestModelConfig` | 5 | setup_params.yaml: GAN mode, architecture, filters |
+| `TestGridCoordinates` | 5 | ICPAC grid: 384x352, 0.1° resolution, bounds |
 
-**Issues:**
-- No validation of input file existence before processing
-- No checks for data shape/dimension compatibility
-- Silent failures possible with `np.maximum(data, 0.0)`
+### Running the tests
 
-**Fix:**
-```python
-# Add validation
-def validate_input_data(nc_file, expected_shape, field_name):
-    if not os.path.exists(nc_file):
-        raise FileNotFoundError(f"Input file not found: {nc_file}")
-    # ... dimension checks
+```bash
+uv run --python 3.11 --with pytest --with "tensorflow==2.15" \
+    --with "numpy<2.0" --with xarray --with netcdf4 --with pyyaml \
+    --with cftime pytest test_cgan_inference.py -v
 ```
 
-### 8. **Mixed File Format Support** 🟢 LOW PRIORITY
-**Location:** `forecast_gfs.py:209-215`
+### Key tests for the corrections
 
-```python
-# Commented out Zarr, using NetCDF
-# input_file = f"{field}_{d.year}.zarr"
-# nc_in_path = os.path.join(input_folder_year, input_file)
-# nc_file = xr.open_zarr(nc_in_path)
-input_file = f"{field}_{d.year}.nc"
+- `test_nonnegative_fields_match_training` — fails if `nonnegative_fields`
+  doesn't match `['cape','msl','pres','pwat','tmp']`
+- `test_apcp_not_in_nonnegative_fields` — fails if `apcp` is in the list
+- `test_elevation_range` — fails if elevation max > 1.0 (meaning /10000 is missing)
+- `test_cap_at_100` / `test_zero_input` / `test_one_input` — validate
+  `denormalise()` matches training: `min(10^x - 1, 100)`
+
+### Adding new tests
+
+Tests that only need NumPy (field definitions, denormalise) run fast.
+Tests that load constants files or the norm pickle require the model data
+directory and will `pytest.skip()` if files are not present.
+
+## Output Format
+
 ```
-
-**Issues:**
-- Dead code (commented Zarr support)
-- Unclear which format should be used
-- Maintenance burden
-
-**Fix:**
-- Remove dead code
-- Document required file format clearly
-- If both formats needed, make it a config option
-
-### 9. **Output Directory Structure** 🟢 LOW PRIORITY
-**Location:** `forecast_gfs.py:181`
-
-```python
-output_folder_year = output_folder+f"test/{d.year}/"
+GAN_YYYYMMDD.nc
+├── dimensions: (time, member, valid_time, latitude, longitude)
+├── precipitation: float32, units "mm h**-1"
+├── latitude: 384 points, -13.65° to 24.65° (0.1° resolution)
+├── longitude: 352 points, 19.15° to 54.25° (0.1° resolution)
+├── member: 1 to 50 (ensemble members)
+└── valid_time: 4 steps (+30h, +36h, +42h, +48h)
 ```
-
-**Issues:**
-- Hard-coded "test" subdirectory
-- Unclear why "test" is in path
-- Should be configurable
-
-**Fix:**
-- Add output_subdirectory config parameter
-- Or remove "test" if not needed
-
-### 10. **Model Architecture Assumptions** 🟢 LOW PRIORITY
-**Location:** `forecast_gfs.py:87`
-
-```python
-assert mode == "GAN", "standalone forecast script only for GAN, not VAE-GAN or deterministic model"
-```
-
-**Issues:**
-- Script only works with GAN mode
-- Could be extended to support other architectures
-- Limits reusability
-
-**Fix:**
-- Extend support to VAE-GAN and deterministic models
-- Or clearly document GAN-only limitation in docs
-
-## Recommended Improvements
-
-### Priority 1: Critical Fixes
-1. **Consolidate normalization logic** into shared utilities
-2. **Remove hard-coded coordinates** - read from input files
-3. **Fix path management** - use proper package structure
-4. **Add input validation** - check files exist and have expected structure
-
-### Priority 2: Code Quality
-5. **Clean up configuration** - single source of truth for configs
-6. **Document magic numbers** - explain all index offsets and constants
-7. **Improve error messages** - helpful errors when things go wrong
-8. **Add logging** - track progress and debug issues
-
-### Priority 3: Future Enhancements
-9. **Support multiple regions** - make geographic area configurable
-10. **Parallel processing** - process multiple dates/ensemble members concurrently
-11. **Output format options** - support Zarr, HDF5 in addition to NetCDF
-12. **Model agnostic inference** - support VAE-GAN and deterministic models
-
-## Setup Checklist
-
-- [ ] Install Python dependencies (TensorFlow, xarray, netCDF4, etc.)
-- [ ] Set `TF_USE_LEGACY_KERAS=1` environment variable
-- [ ] Configure `local_config.yaml` with your environment name
-- [ ] Update `data_paths.yaml` with correct paths for your environment
-- [ ] Configure `forecast_gfs.yaml` with model path, dates, and output location
-- [ ] Ensure trained model exists at specified path with correct checkpoint
-- [ ] Verify input NetCDF files exist for all required fields
-- [ ] Generate normalization statistics (`FCSTNorm2018.pkl`) if not present
-- [ ] Verify constants files exist (elevation, land-sea mask)
-- [ ] Create output directory structure
-- [ ] Test with single date before batch processing
-
-## Usage Example
-
-```python
-# 1. Set environment variable (must be before imports)
-import os
-os.environ["TF_USE_LEGACY_KERAS"] = "1"
-
-# 2. Import and reload module
-import sys
-sys.path.insert(1, "../scripts/")
-import forecast_gfs
-import importlib
-importlib.reload(forecast_gfs)
-
-# 3. Run inference (uses config from ../config/forecast_gfs.yaml)
-forecast_gfs.make_fcst()
-```
-
-## Output
-
-The script generates NetCDF files:
-```
-OUTPUT.folder/test/YYYY/GAN_YYYYMMDD.nc
-```
-
-Structure:
-- Dimensions: `(time, member, valid_time, latitude, longitude)`
-- Variable: `precipitation` in mm/h
-- Ensemble members: Configured number of stochastic realizations
-- Valid times: From `start_hour` to `end_hour` at 6-hour intervals
 
 ## Troubleshooting
 
-**Import errors:**
-- Verify `sys.path.insert()` is correct relative to execution location
-- Consider installing package in editable mode instead
+**`uv run` fails with Python ABI mismatch:**
+TensorFlow 2.15 requires Python 3.11. The scripts pin `requires-python = "==3.11.*"`.
+If uv can't download Python 3.11, install it manually and retry.
 
-**Missing normalization file:**
-- Run `generate_fcst_norm.py` to create `FCSTNorm2018.pkl`
-- Ensure CONSTANTS_PATH_GEFS is correctly configured
+**Stage 2 import errors (gefs_util.py):**
+Ensure `gefs_util.py` and `stream_gefs_for_cgan.py` are in the same directory
+as `run_gefs_gik_cgan_pipeline.py`.
 
-**GPU memory issues:**
-- Set `gpu_mem_incr: True` in `local_config.yaml`
-- Reduce `ensemble_members` in forecast config
-- Process fewer dates at once
+**Stage 3 slow streaming:**
+Each member streams ~200 MB from AWS S3. With 30 members, expect ~2 hours.
+Use `--max_members 5` for testing.
 
-**File not found errors:**
-- Check all paths in `data_paths.yaml` are absolute and correct
-- Verify input files follow naming convention: `{field}_YYYY.nc`
-- Ensure year folder exists in input directory
+**Stage 5 slow on CPU:**
+Each ensemble member takes ~11s on CPU. With 50 members x 4 valid times
+= 200 predictions, expect ~37 minutes. Use a GPU for production runs.
+
+**No GPU found:**
+TensorFlow 2.15 GPU requires CUDA 12. The CPU fallback works but is slower.
