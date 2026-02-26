@@ -25,6 +25,12 @@ uv run --python 3.11 --with pytest --with "tensorflow==2.15" \
     --with cftime pytest test_cgan_inference.py -v
 ```
 
+To make the uv env constant and avoid uv run 
+```
+uv venv --python 3.11
+source .venv/bin/activate
+uv pip install tensorflow==2.15 "numpy<2.0" xarray netcdf4 pyyaml cftime pytest
+```
 ## Why `uv run`?
 
 The cGAN model requires **TensorFlow 2.15** which only supports Python 3.11.
