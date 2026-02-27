@@ -526,7 +526,17 @@ def run_inference():
         print(f"\nProcessing: {d.year}-{d.month:02d}-{d.day:02d}")
 
         # Input/output paths
+        run_id = CONFIG.get("run", "00")
+        date_tag = f"{d.year}{d.month:02d}{d.day:02d}"
+        # New layout: {input_folder}/{YYYYMMDD}_{RUN}z/
+        input_folder_daterun = os.path.join(input_folder, f"{date_tag}_{run_id}z")
+        # Fallback: legacy layout {input_folder}/{year}/
         input_folder_year = os.path.join(input_folder, str(d.year))
+        # Pick whichever exists (prefer date-specific)
+        if os.path.isdir(input_folder_daterun):
+            input_folder_active = input_folder_daterun
+        else:
+            input_folder_active = input_folder_year
         output_folder_year = os.path.join(output_folder, str(d.year))
         pathlib.Path(output_folder_year).mkdir(parents=True, exist_ok=True)
 
@@ -553,8 +563,12 @@ def run_inference():
 
             # Load and normalize each field
             for field in all_fcst_fields:
-                input_file = f"{field}_{d.year}.nc"
-                nc_in_path = os.path.join(input_folder_year, input_file)
+                # New naming: {field}_{YYYYMMDD}_{RUN}z.nc
+                new_name = f"{field}_{date_tag}_{run_id}z.nc"
+                new_path = os.path.join(input_folder_active, new_name)
+                # Legacy naming: {field}_{year}.nc
+                legacy_path = os.path.join(input_folder_active, f"{field}_{d.year}.nc")
+                nc_in_path = new_path if os.path.exists(new_path) else legacy_path
 
                 nc_file = xr.open_dataset(nc_in_path)
                 nc_file = nc_file.sel({"time": day})

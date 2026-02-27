@@ -374,7 +374,8 @@ def stream_gefs_data(
 def convert_zarr_to_netcdf(
     zarr_dir: Path,
     output_dir: Path,
-    target_date: str
+    target_date: str,
+    target_run: str = "00",
 ) -> bool:
     """Convert zarr store to NetCDF format for cGAN."""
     import zarr
@@ -383,7 +384,6 @@ def convert_zarr_to_netcdf(
 
     store = zarr.open_group(str(zarr_dir), mode='r')
 
-    year = target_date[:4]
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Variable mapping: zarr name -> cGAN NetCDF name
@@ -448,7 +448,7 @@ def convert_zarr_to_netcdf(
             }
         )
 
-        output_file = output_dir / f"{cgan_name}_{year}.nc"
+        output_file = output_dir / f"{cgan_name}_{target_date}_{target_run}z.nc"
         ds_out.to_netcdf(output_file)
         saved_files.append(output_file)
         print("OK")
@@ -470,7 +470,8 @@ def run_cgan_inference(
     checkpoint: int,
     start_hour: int = 30,
     end_hour: int = 54,
-    ensemble_members: int = 50
+    ensemble_members: int = 50,
+    target_run: str = "00",
 ) -> bool:
     """Run cGAN inference on the prepared NetCDF data."""
     # Check for TensorFlow
@@ -495,7 +496,7 @@ def run_cgan_inference(
     config = {
         "model_folder": model_folder,
         "checkpoint": checkpoint,
-        "input_folder": str(netcdf_dir.parent),  # Parent because inference looks for {input_folder}/{year}/
+        "input_folder": str(netcdf_dir.parent),  # Parent because inference looks for {input_folder}/{date}_{run}z/
         "constants_path": constants_path,
         "output_folder": str(output_dir),
         "dates": [date_formatted],
@@ -504,6 +505,7 @@ def run_cgan_inference(
         "ensemble_members": ensemble_members,
         "normalization_mode": "gefs",
         "gefs_norm_file": os.path.join(constants_path, "FCSTNorm_GEFS_2018.pkl"),
+        "run": target_run,
     }
 
     # Check if model files exist
@@ -632,7 +634,7 @@ Examples:
     # Directory structure
     parquet_dir = output_base / "parquet_refs"
     zarr_dir = output_base / f"zarr_{target_date}_{target_run}z"
-    netcdf_dir = Path(args.netcdf_dir) if args.netcdf_dir else output_base / "netcdf" / target_date[:4]
+    netcdf_dir = Path(args.netcdf_dir) if args.netcdf_dir else output_base / "netcdf" / f"{target_date}_{target_run}z"
     cgan_output = output_base / "cgan_output"
 
     # STAGE 1: Download template
@@ -679,7 +681,7 @@ Examples:
         print("="*70)
         zarr_path = output_base / f"zarr_{target_date}_{target_run}z"
         if zarr_path.exists():
-            if not convert_zarr_to_netcdf(zarr_path, netcdf_dir, target_date):
+            if not convert_zarr_to_netcdf(zarr_path, netcdf_dir, target_date, target_run):
                 print("Stage 4 failed.")
                 if 5 in stages:
                     print("Cannot continue to cGAN inference.")
@@ -697,7 +699,8 @@ Examples:
         print("="*70)
         if not run_cgan_inference(
             netcdf_dir, cgan_output, target_date,
-            args.model_folder, args.constants_path, args.checkpoint
+            args.model_folder, args.constants_path, args.checkpoint,
+            target_run=target_run,
         ):
             print("Stage 5 failed or requires manual execution.")
             print(f"\nTo run inference manually:")
