@@ -97,23 +97,35 @@ FORECAST_HOURS = (30, 54)  # Start and end hours for cGAN inference
 CGAN_HOURS = 6  # cGAN time aggregation window
 
 
-def compute_cgan_step_indices(start_hour=30, end_hour=54, hours=6):
-    """Compute the GEFS step indices needed by cGAN inference.
+def compute_cgan_step_indices(start_hour=30, end_hour=54, hours=6, step_interval=3):
+    """Compute GEFS step positions and forecast hours for cGAN inference.
 
-    The inference code selects pairs of steps for each valid time:
-        hour_idx_1 = valid_time - 1
-        hour_idx_2 = valid_time + hours - 1
+    The cGAN training code (data/data_gefs.py) selects two timesteps per
+    valid time window:
+        step_1 = valid_time          (e.g. 30h)
+        step_2 = valid_time + hours  (e.g. 36h)
 
-    Returns sorted list of unique step indices.
+    GEFS data has 81 3-hourly steps (hours 0, 3, 6, ..., 240).  The
+    positional index in the step dimension is hour // step_interval.
+
+    Returns
+    -------
+    step_positions : list[int]
+        Positional indices for streaming (e.g. [10, 12, 14, 16, 18]).
+    step_hours : list[int]
+        Actual forecast hours for the NetCDF step coordinate
+        (e.g. [30, 36, 42, 48, 54]).
     """
-    valid_times = np.arange(start_hour, end_hour + 1, hours)
     n_valid = end_hour // hours - start_hour // hours
-    needed = set()
+    valid_times = np.arange(start_hour, end_hour + 1, hours)
+    needed_hours = set()
     for i in range(n_valid):
         vt = valid_times[i]
-        needed.add(vt - 1)
-        needed.add(vt + hours - 1)
-    return sorted(needed)
+        needed_hours.add(vt)
+        needed_hours.add(vt + hours)
+    step_hours = sorted(needed_hours)
+    step_positions = [h // step_interval for h in step_hours]
+    return step_positions, step_hours
 
 # Region (ICPAC East Africa)
 REGION = {
@@ -293,12 +305,14 @@ def stream_gefs_data(
     target_date: str,
     target_run: str,
     max_members: Optional[int] = None,
-    step_filter: Optional[set] = None
+    step_filter: Optional[set] = None,
+    step_hours: Optional[list] = None,
 ) -> bool:
     """Stream GEFS data using the parquet references.
 
     Args:
-        step_filter: Optional set of step indices to stream (None = all).
+        step_filter: Optional set of step positions to stream (None = all).
+        step_hours: Optional list of actual forecast hours matching step_filter.
     """
     # Import the streaming module
     script_dir = Path(__file__).parent
@@ -353,9 +367,15 @@ def stream_gefs_data(
     zarr_output = output_dir / f"zarr_{target_date}_{target_run}z"
     zarr_store, _ = create_cgan_zarr_store(zarr_output, n_members, n_zarr_steps)
 
-    # Store step filter metadata for Stage 4 (plain ints for JSON serialization)
+    # Store step metadata for Stage 4 (plain ints for JSON serialization)
     if step_filter:
         zarr_store.attrs['step_indices'] = [int(s) for s in step_indices]
+        # Store actual forecast hours for the NetCDF step coordinate
+        if step_hours is not None:
+            zarr_store.attrs['step_hours'] = [int(h) for h in step_hours]
+        else:
+            # Compute hours from positions (3-hourly GEFS data)
+            zarr_store.attrs['step_hours'] = [int(s * 3) for s in step_indices]
 
     # Stream all members
     for member_idx, pf in enumerate(parquet_files):
@@ -407,14 +427,21 @@ def convert_zarr_to_netcdf(
     members = store['member'][:]
     n_timesteps = store.attrs.get('n_timesteps', 81)
 
-    # Step coordinate: use original step indices if available (filtered mode),
-    # otherwise sequential integers 0..n-1
+    # Step coordinate: prefer actual forecast hours from metadata, fall back
+    # to position indices, then sequential integers.
+    step_hours_meta = store.attrs.get('step_hours', None)
     step_indices_meta = store.attrs.get('step_indices', None)
-    if step_indices_meta is not None:
-        step_coord = np.array(step_indices_meta, dtype=np.int64)
-        print(f"  Using filtered step indices: {list(step_coord)}")
+    if step_hours_meta is not None:
+        step_coord = np.array(step_hours_meta, dtype=np.int64)
+        print(f"  Using forecast hours as step coordinate: {list(step_coord)}")
+    elif step_indices_meta is not None:
+        # Legacy: convert position indices to hours (3-hourly GEFS data)
+        step_coord = np.array(step_indices_meta, dtype=np.int64) * 3
+        print(f"  Converting position indices to hours: {list(step_coord)}")
     else:
-        step_coord = np.arange(n_timesteps, dtype=np.int64)
+        # Full dataset: position indices × 3 = forecast hours
+        step_coord = np.arange(n_timesteps, dtype=np.int64) * 3
+        print(f"  Using full 3-hourly step hours: 0 to {(n_timesteps-1)*3}")
 
     # Parse init time
     init_time = datetime.strptime(target_date, '%Y%m%d')
@@ -610,11 +637,12 @@ Examples:
 
     # Compute step filter if requested
     step_filter = None
+    step_hours_meta = None
     if args.cgan_steps_only:
-        step_indices = compute_cgan_step_indices(
+        step_positions, step_hours_meta = compute_cgan_step_indices(
             FORECAST_HOURS[0], FORECAST_HOURS[1], CGAN_HOURS
         )
-        step_filter = set(step_indices)
+        step_filter = set(step_positions)
 
     print("="*70)
     print("GEFS GIK → cGAN Unified Pipeline")
@@ -625,7 +653,7 @@ Examples:
     print(f"Stages: {stages}")
     print(f"Ensemble Members: {args.max_members}")
     if step_filter:
-        print(f"Step Filter: {sorted(step_filter)} ({len(step_filter)} of 81 steps)")
+        print(f"Step Filter: positions {sorted(step_filter)} → hours {step_hours_meta} ({len(step_filter)} of 81 steps)")
     print("="*70)
 
     pipeline_start = time.time()
@@ -667,7 +695,7 @@ Examples:
         print("="*70)
         if not stream_gefs_data(
             parquet_dir, output_base, target_date, target_run, args.max_members,
-            step_filter=step_filter
+            step_filter=step_filter, step_hours=step_hours_meta,
         ):
             print("Stage 3 failed.")
             if 4 in stages:

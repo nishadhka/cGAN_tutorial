@@ -573,23 +573,33 @@ def run_inference():
                 nc_file = xr.open_dataset(nc_in_path)
                 nc_file = nc_file.sel({"time": day})
 
-                # Step indices for this valid time pair
-                hour_idx_1 = valid_times[out_time_idx] - 1
-                hour_idx_2 = valid_times[out_time_idx] + HOURS - 1
+                # Select two forecast hours matching training code:
+                #   step_1 = valid_time
+                #   step_2 = valid_time + HOURS
+                # (data_gefs.py: sel(step=[timedelta(time_idx), timedelta(time_idx+HOURS)]))
+                hour_1 = int(valid_times[out_time_idx])
+                hour_2 = int(valid_times[out_time_idx]) + HOURS
 
-                # Select two timesteps: use sel (value-based) for integer step
-                # coordinates (supports both full 81-step and filtered datasets),
-                # fall back to isel (position-based) for legacy timedelta coords.
                 step_vals = nc_file.step.values
                 if np.issubdtype(step_vals.dtype, np.integer):
-                    nc_file = nc_file.sel({"step": [hour_idx_1, hour_idx_2]})
+                    nc_file = nc_file.sel({"step": [hour_1, hour_2]})
                 else:
-                    nc_file = nc_file.isel({"step": [hour_idx_1, hour_idx_2]})
+                    nc_file = nc_file.sel(
+                        {"step": [np.timedelta64(hour_1, 'h'),
+                                  np.timedelta64(hour_2, 'h')]}
+                    )
 
                 short_name = [var for var in nc_file.data_vars][0]
 
                 # Shape: (member, step, lat, lon)
                 data = nc_file[short_name].values  # (member, step, lat, lon)
+
+                # Flip latitude to ascending (S→N) to match constants
+                # (training zarr + constants both use ascending latitudes;
+                # GEFS source data uses descending N→S ordering)
+                lat_vals = nc_file.latitude.values
+                if lat_vals[0] > lat_vals[-1]:
+                    data = data[:, :, ::-1, :]
                 n_members = data.shape[0]
                 n_steps = data.shape[1]
 
