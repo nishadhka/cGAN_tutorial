@@ -127,6 +127,72 @@ def compute_cgan_step_indices(start_hour=30, end_hour=54, hours=6, step_interval
     step_positions = [h // step_interval for h in step_hours]
     return step_positions, step_hours
 
+
+def compute_apcp_cumulative_steps(end_hour=54, step_interval=3):
+    """Compute ALL GEFS step positions from hour 0 to end_hour for cumulative APCP.
+
+    GEFS APCP uses 6-hour accumulation buckets (resets at hours 0, 6, 12, ...).
+    To compute total accumulated precipitation from hour 0 to any target hour,
+    we need all intermediate steps so we can sum bucket-boundary values.
+
+    Returns
+    -------
+    step_positions : list[int]
+        All positional indices from 0 to end_hour // step_interval.
+    step_hours : list[int]
+        All forecast hours from 0 to end_hour.
+    """
+    step_hours = list(range(0, end_hour + step_interval, step_interval))
+    step_positions = [h // step_interval for h in step_hours]
+    return step_positions, step_hours
+
+
+def bucket_to_total_accumulated(data, step_hours, bucket_period=6):
+    """Convert GEFS bucket-incremental APCP to total accumulated from hour 0.
+
+    GEFS APCP accumulates within 6-hour buckets that reset at hours 0, 6, 12, ...
+    At each step, the value represents precipitation accumulated since the
+    last bucket boundary.  This function sums bucket contributions to produce
+    the total accumulated precipitation from hour 0.
+
+    Args:
+        data: array of shape (member, n_steps, lat, lon)
+        step_hours: list of forecast hours, one per step in the data
+        bucket_period: bucket reset interval in hours (default 6)
+
+    Returns:
+        cumulative: array of same shape, values = total accumulated from hour 0
+    """
+    cumulative = np.zeros_like(data)
+
+    # Build a mapping from hour to step index
+    hour_to_idx = {h: i for i, h in enumerate(step_hours)}
+
+    for i, hour in enumerate(step_hours):
+        if hour == 0:
+            cumulative[:, i, :, :] = 0
+            continue
+
+        # Determine the start of the current bucket
+        current_bucket_start = (hour // bucket_period) * bucket_period
+
+        total = np.zeros_like(data[:, 0, :, :])
+
+        # Sum all bucket-boundary (end-of-bucket) values for complete buckets
+        # Bucket boundaries: bucket_period, 2*bucket_period, ..., current_bucket_start
+        for boundary in range(bucket_period, current_bucket_start + 1, bucket_period):
+            if boundary in hour_to_idx:
+                total = total + data[:, hour_to_idx[boundary], :, :]
+
+        # If this hour is NOT a bucket boundary, add the partial (within-bucket)
+        # accumulation.  If it IS a boundary, its value is already included above.
+        if hour % bucket_period != 0:
+            total = total + data[:, i, :, :]
+
+        cumulative[:, i, :, :] = total
+
+    return cumulative
+
 # Region (ICPAC East Africa)
 REGION = {
     'lat_min': -13.65, 'lat_max': 24.65,
@@ -307,12 +373,18 @@ def stream_gefs_data(
     max_members: Optional[int] = None,
     step_filter: Optional[set] = None,
     step_hours: Optional[list] = None,
+    cumulative_apcp: bool = False,
+    apcp_step_filter: Optional[set] = None,
+    apcp_step_hours: Optional[list] = None,
 ) -> bool:
     """Stream GEFS data using the parquet references.
 
     Args:
         step_filter: Optional set of step positions to stream (None = all).
         step_hours: Optional list of actual forecast hours matching step_filter.
+        cumulative_apcp: If True, download extra APCP steps for cumulative calc.
+        apcp_step_filter: Step positions for APCP (all steps 0 to end_hour).
+        apcp_step_hours: Forecast hours for APCP steps.
     """
     # Import the streaming module
     script_dir = Path(__file__).parent
@@ -363,9 +435,21 @@ def stream_gefs_data(
     else:
         n_zarr_steps = n_timesteps
 
+    # Per-variable step count overrides for cumulative apcp
+    n_timesteps_overrides = None
+    step_filter_overrides = None
+    if cumulative_apcp and apcp_step_filter:
+        apcp_n_steps = len(sorted(apcp_step_filter))
+        n_timesteps_overrides = {'apcp': apcp_n_steps}
+        step_filter_overrides = {'apcp': apcp_step_filter}
+        print(f"  Cumulative APCP: downloading {apcp_n_steps} steps (hours 0-{max(apcp_step_hours or [0])})")
+
     # Create zarr store
     zarr_output = output_dir / f"zarr_{target_date}_{target_run}z"
-    zarr_store, _ = create_cgan_zarr_store(zarr_output, n_members, n_zarr_steps)
+    zarr_store, _ = create_cgan_zarr_store(
+        zarr_output, n_members, n_zarr_steps,
+        n_timesteps_overrides=n_timesteps_overrides,
+    )
 
     # Store step metadata for Stage 4 (plain ints for JSON serialization)
     if step_filter:
@@ -377,10 +461,17 @@ def stream_gefs_data(
             # Compute hours from positions (3-hourly GEFS data)
             zarr_store.attrs['step_hours'] = [int(s * 3) for s in step_indices]
 
+    # Store apcp-specific metadata for cumulative calculation in Stage 4
+    if cumulative_apcp and apcp_step_hours:
+        zarr_store.attrs['cumulative_apcp'] = True
+        zarr_store.attrs['apcp_step_hours'] = [int(h) for h in apcp_step_hours]
+
     # Stream all members
     for member_idx, pf in enumerate(parquet_files):
         stream_all_variables_for_member(
-            str(pf), zarr_store, member_idx, step_filter=step_filter
+            str(pf), zarr_store, member_idx,
+            step_filter=step_filter,
+            step_filter_overrides=step_filter_overrides,
         )
 
     print(f"  Output: {zarr_output}")
@@ -397,7 +488,12 @@ def convert_zarr_to_netcdf(
     target_date: str,
     target_run: str = "00",
 ) -> bool:
-    """Convert zarr store to NetCDF format for cGAN."""
+    """Convert zarr store to NetCDF format for cGAN.
+
+    When the zarr store has 'cumulative_apcp' metadata, the APCP variable
+    is converted from GEFS bucket-incremental to total-accumulated values
+    before writing to NetCDF.  Only the cGAN-needed step hours are written.
+    """
     import zarr
 
     print(f"  Reading zarr from: {zarr_dir}")
@@ -443,6 +539,14 @@ def convert_zarr_to_netcdf(
         step_coord = np.arange(n_timesteps, dtype=np.int64) * 3
         print(f"  Using full 3-hourly step hours: 0 to {(n_timesteps-1)*3}")
 
+    # Check for cumulative APCP mode
+    do_cumulative_apcp = store.attrs.get('cumulative_apcp', False)
+    apcp_all_hours = store.attrs.get('apcp_step_hours', None)
+    if do_cumulative_apcp:
+        print(f"  Cumulative APCP mode: converting bucket-incremental → total accumulated")
+        if apcp_all_hours:
+            print(f"    APCP step hours: {list(apcp_all_hours[:5])} ... {list(apcp_all_hours[-3:])}")
+
     # Parse init time
     init_time = datetime.strptime(target_date, '%Y%m%d')
 
@@ -456,6 +560,25 @@ def convert_zarr_to_netcdf(
         print(f"    {zarr_var} -> {cgan_name}...", end=' ', flush=True)
 
         data = store[zarr_var][:]  # (member, step, lat, lon)
+
+        # Handle cumulative APCP conversion
+        if zarr_var == 'apcp' and do_cumulative_apcp and apcp_all_hours:
+            apcp_all_hours_list = [int(h) for h in apcp_all_hours]
+
+            # Convert bucket-incremental to total accumulated
+            data = bucket_to_total_accumulated(data, apcp_all_hours_list)
+            print("(cumsum) ", end='', flush=True)
+
+            # Extract only the cGAN-needed step hours
+            needed_hours = set(int(h) for h in step_coord)
+            keep_indices = [i for i, h in enumerate(apcp_all_hours_list) if h in needed_hours]
+            data = data[:, keep_indices, :, :]
+
+            # Verify shape matches step_coord
+            if data.shape[1] != len(step_coord):
+                print(f"WARNING: APCP shape mismatch after extraction "
+                      f"({data.shape[1]} vs {len(step_coord)} expected)")
+
         data_with_time = np.expand_dims(data, axis=0)  # (1, member, step, lat, lon)
 
         ds_out = xr.Dataset(
@@ -622,6 +745,10 @@ Examples:
                        help='Pre-existing NetCDF directory (for stage 5 only)')
     parser.add_argument('--cgan_steps_only', action='store_true',
                        help='Only stream the timesteps needed for cGAN inference (5 of 81, ~93%% faster)')
+    parser.add_argument('--cumulative_apcp', action='store_true',
+                       help='Convert bucket-incremental APCP to total accumulated from hour 0. '
+                            'Downloads all APCP steps (0 to end_hour) and computes cumulative sum '
+                            'during zarr-to-NetCDF conversion. Implies --cgan_steps_only for non-APCP variables.')
 
     args = parser.parse_args()
 
@@ -638,11 +765,23 @@ Examples:
     # Compute step filter if requested
     step_filter = None
     step_hours_meta = None
-    if args.cgan_steps_only:
+    cumulative_apcp = args.cumulative_apcp
+    apcp_step_filter = None
+    apcp_step_hours_meta = None
+
+    if args.cgan_steps_only or cumulative_apcp:
         step_positions, step_hours_meta = compute_cgan_step_indices(
             FORECAST_HOURS[0], FORECAST_HOURS[1], CGAN_HOURS
         )
         step_filter = set(step_positions)
+
+    if cumulative_apcp:
+        # For cumulative APCP, download ALL steps from hour 0 to end_hour
+        max_cgan_hour = max(step_hours_meta) if step_hours_meta else FORECAST_HOURS[1]
+        apcp_positions, apcp_step_hours_meta = compute_apcp_cumulative_steps(
+            end_hour=max_cgan_hour
+        )
+        apcp_step_filter = set(apcp_positions)
 
     print("="*70)
     print("GEFS GIK → cGAN Unified Pipeline")
@@ -654,6 +793,8 @@ Examples:
     print(f"Ensemble Members: {args.max_members}")
     if step_filter:
         print(f"Step Filter: positions {sorted(step_filter)} → hours {step_hours_meta} ({len(step_filter)} of 81 steps)")
+    if cumulative_apcp:
+        print(f"Cumulative APCP: downloading {len(apcp_step_filter)} steps (hours 0-{max_cgan_hour})")
     print("="*70)
 
     pipeline_start = time.time()
@@ -696,6 +837,9 @@ Examples:
         if not stream_gefs_data(
             parquet_dir, output_base, target_date, target_run, args.max_members,
             step_filter=step_filter, step_hours=step_hours_meta,
+            cumulative_apcp=cumulative_apcp,
+            apcp_step_filter=apcp_step_filter,
+            apcp_step_hours=apcp_step_hours_meta,
         ):
             print("Stage 3 failed.")
             if 4 in stages:
