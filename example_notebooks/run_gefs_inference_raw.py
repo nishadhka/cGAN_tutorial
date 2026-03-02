@@ -72,15 +72,16 @@ CONFIG = {
     # Model files from cgan_compact_20260202.zip
     "model_folder": _os.path.join(_SCRIPT_DIR, "cgan_compact_20260202/logfile_gefs_v3/"),
     "checkpoint": 345600,
-    # Raw NetCDF from GIK pipeline (stream_gefs_for_cgan.py + zarr_to_raw_netcdf.py)
-    "input_folder": _os.path.join(_SCRIPT_DIR, "gik_cgan_pipeline_output/netcdf/"),
+    # Raw NetCDF from GIK pipeline (cumulative APCP)
+    "input_folder": _os.path.join(_SCRIPT_DIR, "gik_cgan_output/netcdf/"),
     "constants_path": _os.path.join(_SCRIPT_DIR, "cgan_compact_20260202/CONSTANTS/"),
     # Output folder
-    "output_folder": _os.path.join(_SCRIPT_DIR, "cgan_output/"),
-    "dates": ["2025-09-18"],
+    "output_folder": _os.path.join(_SCRIPT_DIR, "gik_cgan_output/cgan_output/"),
+    "dates": ["2024-05-20"],
+    "run": "00",
     "start_hour": 30,
     "end_hour": 54,
-    "ensemble_members": 50,
+    "ensemble_members": 25,
     "normalization_mode": "gefs",
     "gefs_norm_file": _os.path.join(_SCRIPT_DIR, "cgan_compact_20260202/CONSTANTS/FCSTNorm_GEFS_2018.pkl"),
 }
