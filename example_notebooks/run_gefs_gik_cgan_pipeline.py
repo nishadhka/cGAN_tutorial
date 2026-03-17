@@ -265,6 +265,7 @@ def create_gik_references(
         from gefs_util import (
             generate_axes,
             filter_build_grib_tree,
+            build_gefs_deflated_store_from_template,
             calculate_time_dimensions,
             cs_create_mapped_index_local,
             prepare_zarr_store,
@@ -294,6 +295,11 @@ def create_gik_references(
     available_members = mapping_manager.list_ensemble_members()
     print(f"  Available members in template: {len(available_members)}")
 
+    # Load deflated store from template (replaces ~30s scan_grib with <1s load)
+    deflated_store = build_gefs_deflated_store_from_template(
+        template_path, filter_vars=forecast_dict
+    )
+
     # Generate time axes
     axes = generate_axes(target_date)
 
@@ -307,15 +313,6 @@ def create_gik_references(
 
         try:
             print(f"    Processing {member}...", end=' ', flush=True)
-
-            # Build GRIB tree structure (only need first 2 files)
-            gefs_files = []
-            for hour in [0, 3]:
-                url = (f"s3://noaa-gefs-pds/gefs.{target_date}/{target_run}/atmos/pgrb2sp25/"
-                       f"{member}.t{target_run}z.pgrb2s.0p25.f{hour:03d}")
-                gefs_files.append(url)
-
-            _, deflated_store = filter_build_grib_tree(gefs_files, forecast_dict)
 
             # Create mapped index
             gefs_kind = cs_create_mapped_index_local(
