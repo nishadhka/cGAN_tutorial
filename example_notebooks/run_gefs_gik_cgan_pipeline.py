@@ -8,7 +8,6 @@
 #     "matplotlib",
 #     "seaborn",
 #     "cartopy",
-#     "jupyter",
 #     "xarray",
 #     "netcdf4",
 #     "scikit-learn",
@@ -16,13 +15,7 @@
 #     "dask",
 #     "tqdm",
 #     "properscoring",
-#     "climlab",
-#     "scitools-iris",
-#     "ecmwf-api-client",
-#     "xesmf",
-#     "flake8",
-#     "regionmask",
-#     "schedule",
+#     "gribberish",
 #     "kerchunk",
 #     "zarr",
 #     "pandas",
@@ -295,10 +288,37 @@ def create_gik_references(
     available_members = mapping_manager.list_ensemble_members()
     print(f"  Available members in template: {len(available_members)}")
 
-    # Load deflated store from template (replaces ~30s scan_grib with <1s load)
-    deflated_store = build_gefs_deflated_store_from_template(
-        template_path, filter_vars=forecast_dict
+    # Load deflated store: try template-based method first (fast), fall back to scan_grib
+    # The deflated-store template parquet may be:
+    #   1. A standalone .parquet file alongside the tar.gz
+    #   2. Embedded inside the tar.gz
+    #   3. Not available → fall back to filter_build_grib_tree
+    deflated_template = template_path.replace('.tar.gz', '').rstrip('.') + '/'
+    # Look for standalone deflated-store parquet next to the tar.gz
+    import glob as _glob
+    candidates = (
+        _glob.glob(os.path.join(os.path.dirname(template_path) or '.', 'gefs-deflated-store-template*.parquet'))
+        + _glob.glob(os.path.join(os.path.dirname(os.path.abspath(template_path)), 'gefs-deflated-store-template*.parquet'))
     )
+    if candidates:
+        print(f"  Using standalone deflated-store template: {candidates[0]}")
+        deflated_store = build_gefs_deflated_store_from_template(
+            candidates[0], filter_vars=forecast_dict
+        )
+    else:
+        try:
+            deflated_store = build_gefs_deflated_store_from_template(
+                template_path, filter_vars=forecast_dict
+            )
+        except FileNotFoundError:
+            print("  Deflated-store template not found, falling back to scan_grib...")
+            gefs_files = []
+            sample_member = ensemble_members[0]
+            for hour in [0, 3]:
+                url = (f"s3://noaa-gefs-pds/gefs.{target_date}/{target_run}/atmos/pgrb2sp25/"
+                       f"{sample_member}.t{target_run}z.pgrb2s.0p25.f{hour:03d}")
+                gefs_files.append(url)
+            _, deflated_store = filter_build_grib_tree(gefs_files, forecast_dict)
 
     # Generate time axes
     axes = generate_axes(target_date)
