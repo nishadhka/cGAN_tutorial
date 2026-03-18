@@ -122,20 +122,24 @@ def compute_cgan_step_indices(start_hour=30, end_hour=54, hours=6, step_interval
 
 
 def compute_apcp_cumulative_steps(end_hour=54, step_interval=3):
-    """Compute ALL GEFS step positions from hour 0 to end_hour for cumulative APCP.
+    """Compute ALL GEFS step positions from hour 3 to end_hour for cumulative APCP.
 
     GEFS APCP uses 6-hour accumulation buckets (resets at hours 0, 6, 12, ...).
     To compute total accumulated precipitation from hour 0 to any target hour,
     we need all intermediate steps so we can sum bucket-boundary values.
 
+    Note: GEFS has no APCP at T+0h (step position 0) — accumulation starts
+    at T+3h (step position 1).  Starting from hour 3 avoids a missing-chunk
+    mismatch that would leave the last zarr slot as NaN.
+
     Returns
     -------
     step_positions : list[int]
-        All positional indices from 0 to end_hour // step_interval.
+        Positional indices from step_interval to end_hour // step_interval.
     step_hours : list[int]
-        All forecast hours from 0 to end_hour.
+        Forecast hours from step_interval to end_hour.
     """
-    step_hours = list(range(0, end_hour + step_interval, step_interval))
+    step_hours = list(range(step_interval, end_hour + step_interval, step_interval))
     step_positions = [h // step_interval for h in step_hours]
     return step_positions, step_hours
 
