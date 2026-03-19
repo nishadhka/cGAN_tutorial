@@ -201,7 +201,6 @@ def run_gik_path(date_str: str, run: str, max_members: int,
         stream_gefs_data,
         convert_zarr_to_netcdf,
         compute_cgan_step_indices,
-        compute_apcp_cumulative_steps,
         TEMPLATE_URL,
         FORECAST_HOURS,
         CGAN_HOURS,
@@ -216,9 +215,10 @@ def run_gik_path(date_str: str, run: str, max_members: int,
         FORECAST_HOURS[0], FORECAST_HOURS[1], CGAN_HOURS
     )
     step_filter = set(step_positions)
-    max_cgan_hour = max(step_hours)
-    apcp_positions, apcp_step_hours = compute_apcp_cumulative_steps(end_hour=max_cgan_hour)
-    apcp_step_filter = set(apcp_positions)
+
+    # NOTE: Do NOT use cumulative_apcp — the cGAN model was trained on
+    # raw bucket-incremental APCP (6h accumulation per step), not total
+    # accumulated from hour 0.  Using cumulative inflates APCP by ~5-9x.
 
     # Stage 1: Download template
     log.info("\n  Stage 1: Download template")
@@ -236,15 +236,12 @@ def run_gik_path(date_str: str, run: str, max_members: int,
         return False
     timing.record("GIK Stage 2: parquet refs", time.time() - t0)
 
-    # Stage 3: Stream data
+    # Stage 3: Stream data (raw bucket-incremental, cGAN steps only)
     log.info("\n  Stage 3: Stream GEFS data")
     t0 = time.time()
     if not stream_gefs_data(
         parquet_dir, gik_base, date_str, run, max_members,
         step_filter=step_filter, step_hours=step_hours,
-        cumulative_apcp=True,
-        apcp_step_filter=apcp_step_filter,
-        apcp_step_hours=apcp_step_hours,
     ):
         log.error("  Stage 3 failed")
         return False
