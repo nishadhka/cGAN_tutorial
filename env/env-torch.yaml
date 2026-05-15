@@ -1,0 +1,42 @@
+name: torch
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.10
+  - pip
+
+  # --- PyTorch (GPU build) ---
+  # cuda120 conda-forge build pairs with the base image's CUDA 12.2 driver libs
+  - pytorch=2.1.*=cuda120*
+  - torchvision=0.16.*
+  - pytorch-lightning=1.9.4   # latest 1.9.x on conda-forge; preserves `pytorch_lightning.core.lightning` / DDPPlugin API
+
+  # --- Numeric / scientific ---
+  - numpy=1.26.*
+  - scipy
+  - pandas
+  - matplotlib-base
+  - scikit-learn
+  - scikit-image
+
+  # --- Climate / forecast verification ---
+  - xarray
+  - netcdf4
+  - h5py
+  - dask
+  - distributed
+  - xskillscore
+  - cftime
+
+  # --- Utilities seen in CGAN_extreme_precipitation imports ---
+  - tqdm
+  - multiprocess
+
+  # --- Jupyter kernel registration ---
+  - ipykernel
+
+  # --- Pip-only packages ---
+  - pip:
+    - pytictoc
+    - catalyst

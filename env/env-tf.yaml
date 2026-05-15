@@ -1,0 +1,52 @@
+name: tf
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.10
+  - pip
+
+  # --- Deep learning (GPU build) ---
+  # Picks the cuda120 build matching the base image's CUDA 12.2 driver libs
+  - tensorflow=2.15.*=cuda120*
+  - keras=2.15.*
+
+  # --- Numeric / scientific ---
+  - numpy=1.26.*
+  - scipy
+  - pandas
+  - matplotlib-base
+  - seaborn
+  - scikit-learn
+  - scikit-image
+
+  # --- Geo / climate stack (the reason we chose conda-forge) ---
+  - xarray
+  - netcdf4
+  - h5netcdf
+  - h5py
+  - zarr
+  - dask
+  - distributed
+  - cartopy
+  - xesmf
+  - esmpy
+  - cftime
+  - kerchunk
+  - properscoring
+  - noise
+
+  # --- Storage / cloud ---
+  - fsspec
+  - gcsfs
+  - google-cloud-storage
+  - pyyaml
+  - joblib
+
+  # --- Experiment tracking / dev ---
+  - wandb
+  - tqdm
+  - pytest
+
+  # --- Jupyter kernel registration ---
+  - ipykernel

@@ -1,0 +1,15 @@
+**/.git
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.ipynb_checkpoints
+**/.DS_Store
+**/wandb
+**/mlruns
+
+# Credentials — never copy into the image build context
+*.json
+key-*.json
+*-key.json
+*-credentials.json
+application_default_credentials.json

@@ -1,0 +1,51 @@
+# Build the two-framework cGAN image on Cloud Build and push to Artifact Registry.
+#
+# Submit from this directory:
+#   gcloud builds submit \
+#     --config=cloudbuild.yaml \
+#     --project=sewaa-416306 \
+#     --region=us-east1 \
+#     .
+#
+# Override the tag (e.g. for v1.1):
+#   gcloud builds submit --config=cloudbuild.yaml --substitutions=_TAG=v1.1 .
+#
+# Build is ~20-30 min on E2_HIGHCPU_8 (most time is conda-forge solve + downloads).
+# Final image is roughly 6-8 GB compressed in the registry.
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build'
+    env:
+      - 'DOCKER_BUILDKIT=1'
+    args:
+      - 'build'
+      - '--progress=plain'
+      - '--tag'
+      - '${_IMAGE}:${_TAG}'
+      - '--tag'
+      - '${_IMAGE}:latest'
+      - '--cache-from'
+      - '${_IMAGE}:latest'
+      - '.'
+
+# Cloud Build will push these tags after the build step finishes successfully
+images:
+  - '${_IMAGE}:${_TAG}'
+  - '${_IMAGE}:latest'
+
+substitutions:
+  _IMAGE: 'us-east1-docker.pkg.dev/sewaa-416306/coiled/cgan-tf-torch'
+  _TAG: 'v1.0'
+
+# 90 min ceiling; conda-forge solves for TF + PyTorch together can take a while
+timeout: '5400s'
+
+options:
+  # E2_HIGHCPU_8 = 8 vCPUs, 8 GB RAM. Plenty for the micromamba solve.
+  # Bump to E2_HIGHCPU_32 if you want faster builds; costs ~4x.
+  machineType: 'E2_HIGHCPU_8'
+  # 100 GB scratch disk — comfortably above the ~25 GB peak build need.
+  diskSizeGb: '100'
+  # Required when no custom logs bucket is configured on the project
+  logging: 'CLOUD_LOGGING_ONLY'

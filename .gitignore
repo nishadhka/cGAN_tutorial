@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 *.so
 
+# Jupyter
+.ipynb_checkpoints/
+
 # Terraform
 .terraform/
 *.tfstate
@@ -15,6 +18,12 @@ __pycache__/
 # Environment files
 .env
 *.env
+
+# Service account keys / credentials — NEVER commit
+env/key-*.json
+env/*-key.json
+env/*-credentials.json
+env/application_default_credentials.json
 
 # Large data files
 *.nc

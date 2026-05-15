@@ -1,0 +1,17 @@
+# Excludes files from the Cloud Build upload (the staging GCS bucket).
+# Mirrors .dockerignore plus the SA key so credentials never leave this machine.
+
+.git/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+wandb/
+mlruns/
+
+# Service account / credentials — never upload
+*.json
+key-*.json
+*-key.json
+*-credentials.json
+application_default_credentials.json
