@@ -24,6 +24,11 @@ env/key-*.json
 env/*-key.json
 env/*-credentials.json
 env/application_default_credentials.json
+coiled-data.json
+**/coiled-data.json
+example_notebooks/pytorch_cgan/.env
+example_notebooks/pytorch_cgan/*.log
+example_notebooks/pytorch_cgan/ecmwf_pytorch_cgan_*.json
 
 # Large data files
 *.nc
