@@ -31,9 +31,13 @@ Adapted from ``bn-airquality/ingest_ecmwf_fog_variables.py`` (same
 pattern: HF parquet refs -> S3 byte-range GRIB fetches via Coiled/Dask
 -> Icechunk write).
 
-Channel set (10 channels — reduced from the paper's 11 to match AWS
-S3 Open Data availability — see ``docs/east_africa_kenya_training_plan.md``
-section 7 for the full rationale):
+Channel set — **surface-only pilot configuration (5 channels)**.
+
+The paper uses 11 channels (5 surface + 5 pressure-level + 1 derived).
+This pilot temporarily drops the pressure-level set because the current
+GIK parquet exposes a different hPa level per lead-time step under the
+same key (see ``GIK_PARQUET_PER_LEVEL_KEYS_NEEDED.md`` in this folder).
+Surface vars are unaffected.
 
   PyTorch EP channel  Source field    Notes
   ──────────────────  ─────────────   ──────────────────────────────────
@@ -45,13 +49,10 @@ section 7 for the full rationale):
   sp                  sp              surface pressure
   cp_proxy            sf              snowfall used as cp proxy
                                       (cp absent from ENS open data)
-  u                   u @ 700 hPa     low-trop u-wind
-  v                   v @ 700 hPa     low-trop v-wind
-  ub                  u @ 925 hPa     boundary-layer u-wind
-  vb                  v @ 925 hPa     boundary-layer v-wind
-  gh                  gh @ 500 hPa    500 hPa geopotential height
-  cape_proxy          (mucape)        optional — only fetched if available
-                                      in the parquet (probe-levels first)
+  u, v, ub, vb, gh    pl              ❌ DISABLED — re-enable once the GIK
+                                      parquet exposes per-level keys; see
+                                      GIK_PARQUET_PER_LEVEL_KEYS_NEEDED.md
+  cape_proxy          (mucape)        future — needs MU-CAPE in parquet
 
 The paper's ``lsp`` channel is dropped (not in ENS open data, redundant
 with tp-cp). The paper's ``cape`` uses MU-CAPE proxy because standard
@@ -233,24 +234,29 @@ SURFACE_VAR_ATTRS: Dict[str, Dict[str, str]] = {
                          "the same proxy."},
 }
 
-# Pressure-level variables: (ec_var, hPa) -> stored output name.
-# The GIK parquet (E4DRR/gik-ecmwf-par) exposes ONLY ONE pl key per variable
-# per step. Levels confirmed via probe-levels on 20260301:
-#   u  -> 500 hPa
-#   v  -> 500 hPa
-#   gh -> 300 hPa
-# For boundary-layer winds (paper's ub/vb at 925 hPa) and 500-hPa height,
-# a separate fetch from the raw ECMWF Open Data feed is needed.
-PRESSURE_VARS: Dict[Tuple[str, int], str] = {
-    ("u",  500): "u500",    # 500 hPa u-wind (only level exposed in parquet)
-    ("v",  500): "v500",    # 500 hPa v-wind
-    ("gh", 300): "gh300",   # 300 hPa geopotential height (upper-trop flow)
-}
-PRESSURE_VAR_ATTRS: Dict[str, Dict[str, str]] = {
-    "u500":  {"long_name": "U-wind component at 500 hPa",       "units": "m s-1", "level_hPa": "500"},
-    "v500":  {"long_name": "V-wind component at 500 hPa",       "units": "m s-1", "level_hPa": "500"},
-    "gh300": {"long_name": "Geopotential height at 300 hPa",    "units": "gpm",   "level_hPa": "300"},
-}
+# Pressure-level variables — DISABLED.
+#
+# The GIK parquet (E4DRR/gik-ecmwf-par) currently exposes only one `pl`
+# reference per (variable, step) and the underlying GRIB messages encode
+# DIFFERENT pressure levels at different lead times. Probe across 9 steps
+# on 20260301 confirmed:
+#   gh/pl steps 6,9,12,15,18,21,24,27,30 -> 400, 300, 300, 400, 300, 400, 1000, 1000, 1000 hPa
+#   u/pl  same steps                     -> 250, 500, 500, 500, 250, 250, 250, 250, 500 hPa
+#   v/pl  same steps                     -> 250, 500, 500, 500, 250, 250, 250, 250, 500 hPa
+#
+# A single (var, step) -> array tensor would therefore mix levels along
+# the lead_time axis — physically meaningless. Surface vars are unaffected.
+#
+# This is a GIK parquet-construction issue, not an ECMWF Open Data
+# limitation. See GIK_PARQUET_PER_LEVEL_KEYS_NEEDED.md (same folder) for
+# the full write-up and the requested upstream fix in
+# https://github.com/icpac-igad/grib-index-kerchunk.
+#
+# Re-enable by setting these dicts to the entries documented in the MD
+# once per-level keys land in the parquet, e.g.
+#   ("u", 700): "u", ("v", 700): "v", ("u", 925): "ub", ...
+PRESSURE_VARS: Dict[Tuple[str, int], str] = {}
+PRESSURE_VAR_ATTRS: Dict[str, Dict[str, str]] = {}
 
 ALL_OUT_NAMES = list(SURFACE_VARS.values()) + list(PRESSURE_VARS.values())
 
@@ -536,13 +542,16 @@ def init_store(args):
             "lead_time_hours": ",".join(str(h) for h in LEAD_TIME_HOURS),
             "channel_mapping": (
                 "tp=total_precip; pw=column_water_vapour; msl=mslp; sp=sfcp; "
-                "cp_proxy=snowfall(cp not in ENS open data); u/v=700hPa wind; "
-                "ub/vb=925hPa wind; gh=500hPa geopotential height"
+                "cp_proxy=snowfall(cp not in ENS open data). Pressure-level "
+                "channels DISABLED — see GIK_PARQUET_PER_LEVEL_KEYS_NEEDED.md."
             ),
             "notes": (
-                "Paper channel 'pad' (768 km tp synoptic context) is computed "
-                "at training time from tp — NOT stored. Paper channel 'lsp' is "
-                "dropped (not in ENS open data, redundant with tp-cp). Paper "
+                "Surface-only pilot configuration. The paper's u/v/ub/vb/gh "
+                "pressure-level channels are temporarily dropped because the "
+                "GIK parquet exposes a different hPa level per lead-time step "
+                "under the same key. Paper channel 'pad' (768 km tp synoptic "
+                "context) is computed at training time from tp — NOT stored. "
+                "Paper channel 'lsp' is dropped (not in ENS open data). Paper "
                 "channel 'cape' may need a MU-CAPE proxy fetched separately."
             ),
             "storage": (
