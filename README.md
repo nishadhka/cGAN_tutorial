@@ -7,3 +7,8 @@ There are three main parts to getting the cGAN up and running for regional post-
 3) [scripts](https://github.com/snath-xoc/cGAN_tutorial/tree/main/scripts): Generating forecasts.
 
 Additionally, sub-directories [evaluation](https://github.com/snath-xoc/cGAN_tutorial/tree/main/evaluation) and [config](https://github.com/snath-xoc/cGAN_tutorial/tree/main/config) contain evaluation scripts and the necessary configuration files for setting data paths and model architecture. 
+
+## Documentation
+
+See [docs/](docs/README.md) for the documentation index — concept & rationale (cGAN training FAQ, East Africa variable-selection rationale, TF vs PyTorch comparison), planning, and workflow guides.
+
