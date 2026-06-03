@@ -130,13 +130,32 @@ herbie_vs_gik_test/
 | cGAN Inference (4 valid times × 25 members) | 545s (9.1 min) | 537s (8.9 min) |
 | **Total** | **~1129s (18.8 min)** | **~1739s (29.0 min)** |
 
-**Herbie is ~1.5x faster** for data acquisition.
+**Herbie is ~1.5x faster** for data acquisition **only when GIK is charged the one-time
+catalog build per run** — which is not the production comparison. See note below.
 
 Herbie downloads per-variable partial GRIB messages via HTTP (1440 fetches at ~0.4s each).
 GIK builds parquet references (~14 min for 30 members using scan_grib) then streams
 byte ranges from S3 (~6 min). The GIK Stage 2 bottleneck could be reduced using the
 template-based `build_gefs_deflated_store_from_template()` method when a standalone
 deflated-store parquet is available.
+
+> **Note — per-run vs one-time cost.** The GIK Stage 2 parquet-ref build (834s / 13.9 min)
+> uses `scan_grib` and is a **one-time, global-scope** cost: the reference catalog is built
+> once at a reference date and published, then reused indefinitely (this run fell back to
+> `scan_grib` only because the deflated-store template was not supplied). It must **not** be
+> charged to every run. The fair, apples-to-apples per-run comparison against a Herbie fetch
+> is **GIK Stage 3 streaming alone**:
+>
+> | Per-run cost (single machine, same bytes) | Herbie (byte-range) | GIK (published catalog) |
+> |---|---|---|
+> | Comparable fetch / stream | 584s (9.7 min) | **Stage 3 only: 368s (6.1 min)** |
+> | One-time, global, amortized | — | Stage 2 build: 834s (13.9 min), paid once |
+>
+> On this basis **GIK streaming is ~1.6× faster than Herbie per run** (6.1 vs 9.7 min) even
+> on a single machine — same messages, but GIK parallelizes the byte-range reads where Herbie
+> loops 1440 serial HTTP fetches. With a Dask cluster the GIK streaming drops further (~3 min
+> at 20 workers). The "~1.5× faster Herbie" headline above reflects the single-run total with
+> the catalog rebuilt, not the production published-catalog path.
 
 ### Pre-Inference Input Comparison
 
