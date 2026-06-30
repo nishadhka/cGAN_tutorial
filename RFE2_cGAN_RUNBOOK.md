@@ -6,7 +6,7 @@ as you go, then train on an expensive GPU reading from local NVMe.
 
 > **Golden rule:** the GPU is expensive — everything in Phases 0–4 (download,
 > norm, TFRecords, upload) is **CPU-only** and must be 100% finished and verified
-> **before** the GPU is started. The GPU only ever sees the ~30–35 GB of
+> **before** the GPU is started. The GPU only ever sees the ~14–20 GB of
 > TFRecords (+ small constants), never the ~388 GB of raw IFS.
 
 ---
@@ -19,7 +19,14 @@ as you go, then train on an expensive GPU reading from local NVMe.
 | Regridded RFE2 truth | `RFE/<year>/<YYYYMMDD>.nc` | small (<1 GB) | CPU prep box |
 | Constants | `cGAN_data/elev.nc`, `lsm.nc` | a few MB | everywhere |
 | Norm constants | `FCSTNorm2018.pkl` | KB | everywhere |
-| **TFRecords (the deliverable)** | `rfe_tfrecords/<year>_1.<bin>.tfrecords` | **~30–35 GB** | source.coop → GPU local |
+| **TFRecords (the deliverable)** | `rfe_tfrecords/<year>_1.<bin>.tfrecords` | **~14–20 GB** | source.coop → GPU local |
+
+> ⚠️ **Two pipeline variants exist.** This runbook documents **variant A**
+> (SEWAA-forecasts-RFE2: 1 lead time, 28 channels → ~14–20 GB). The
+> **cGAN_tutorial** code in this repo (`tensorflow-dev-test/data/`) is **variant B**
+> (4 lead times 30/36/42/48 h, 56 channels → **~100 GB**). They are not
+> interchangeable — pick one via `REPO_DIR`. Full side-by-side comparison and
+> corrected sizes: **[TFRECORDS_PIPELINE_VARIANTS.md](TFRECORDS_PIPELINE_VARIANTS.md)**.
 
 Channels per patch with 14 fields: input `128×128×28` (2 ch/field) + constants
 `×2` + truth `×1`. `input_channels = 2 × len(all_fcst_fields)` is derived
@@ -28,6 +35,49 @@ automatically — no manual channel edits.
 **Disk-frugal strategy:** process **one year at a time** so peak disk ≈ one
 year of raw IFS (~97 GB), not all four. Upload + delete each year's TFRecords
 before moving on.
+
+> **Only the TFRecords are published to source.coop** (plus the few-MB constants
+> and `FCSTNorm.pkl`). The raw `.nc` is **never** uploaded — it is re-downloadable
+> from Oxford and not needed on the GPU. The driver/uploader enforce this.
+
+### 0.1 Why TFRecords are ~20× smaller than the raw NetCDF
+
+This is **data *selection*, not just compression.** Going from ~388 GB raw to
+~14–20 GB of TFRecords comes from three effects, in order of impact:
+
+1. **Lead-time collapse (~30×, the dominant factor).** Each raw field file is
+   `(365 days, 29 valid_times, 384, 352)` — it archives *all 29 forecast
+   valid-times* (the whole 7-day, multi-lead forecast) for general use.
+   Training uses only the **single 24 h accumulation window** (`LEAD_IDX`):
+   `load_fcst` reads ~5 consecutive valid-times and reduces them (trapezium /
+   accumulation rule) to **one mean + one sd** per field. So 29 stored
+   timesteps → 1 used window = **~30× fewer numbers**, before anything else.
+   - raw, 1 field·year: `365×29×384×352×2×4 B ≈ 11.4 GB` (uncompressed)
+   - TFRecords, that field's 2 channels: `365×8×128²×2×4 B ≈ 0.38 GB`
+   - ratio ≈ **29.9×**
+
+2. **Spatial: ~1× (not a reducer).** `write_data` samples
+   `nsamples = 384×352 // 128² = 8` patches of 128×128 per day ≈ one full
+   image-area, so spatially it's roughly break-even (slightly *less* when
+   ocean/invalid patches are skipped by the mask).
+
+3. **GZIP (~1.5–2×, the only real "compression").** TFRecords are written with
+   `compression_type="GZIP"`. Rainfall/forecast fields are smooth and sparse, so
+   GZIP squeezes them ~1.5–2×. The raw `.nc` is *already* deflate-compressed
+   (~1.65×) inside netCDF/HDF5, so these two roughly cancel — i.e. GZIP is **not**
+   where the big saving comes from.
+
+**Putting it together (14 fields, 4 years):**
+```
+bytes per patch  = 128×128 × (28 input + 2 const + 1 truth) × 4 B ≈ 2.03 MB
+patches per year = 365 days × 8 ≈ 2,920
+uncompressed/yr  ≈ 5.9 GB   → 4 years ≈ 23.7 GB   → GZIP ≈ ~14 GB total
+raw on disk      ≈ 388 GB
+```
+Net: **~388 GB → ~14–20 GB (~20–25×)**, almost all from keeping just the one
+training window instead of all 29 archived lead-times, plus pre-cutting the
+fixed-size patches the model actually consumes. That extract is exactly what the
+GPU needs, which is why only it is shipped.
 
 ---
 
@@ -104,7 +154,7 @@ python run_gen_fcst_norm.py    # writes FCSTNorm2018.pkl ; iterates all 14 field
 On import, `data.py` must print **"Loading forecast normalisations"** — if you
 see the `*** NOT LOADED ***` banner, fix the path before continuing.
 
-### 3c. Write the TFRecords for the year (~8 GB)
+### 3c. Write the TFRecords for the year (~3.5-5 GB)
 ```python
 python -c "from tfrecords_generator import write_data; write_data(2018)"
 ```

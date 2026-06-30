@@ -3,7 +3,7 @@
 #
 #   3a download raw IFS (14 fields) for the year   (~97 GB, resumable)
 #   3b gen_fcst_norm                               (2018 only, once)
-#   3c write_data(year)  -> TFRecords              (~8 GB)
+#   3c write_data(year)  -> TFRecords              (~3.5-5 GB)
 #   3d upload --year to source.coop + verify       (then deletes local TFRecords)
 #   3e rm the year's raw IFS                        (reclaim ~97 GB)
 #
@@ -11,7 +11,13 @@
 #
 # Env knobs (override as needed):
 #   CGAN_PY     python with tensorflow+xarray+netCDF4 (REQUIRED for 3c)
-#   REPO_DIR    path to .../24h_accumulations/cGAN/dsrnngan
+#   REPO_DIR    code path that defines write_data — selects the pipeline VARIANT:
+#                 A (RFE2, 1 lead, 28 ch, ~14-20 GB):
+#                   .../SEWAA-forecasts-RFE2/.../cGAN/dsrnngan
+#                 B (cGAN_tutorial, 4 leads, 56 ch, ~100 GB):
+#                   /scratch/notebook/cGAN_tutorial/tensorflow-dev-test/data
+#               See TFRECORDS_PIPELINE_VARIANTS.md. Lead-time COUNT is a code
+#               constant inside that repo's write_data, not a CLI flag.
 #   DATA_ROOT   where IFS_training/, rfe_tfrecords/, cGAN_data/ live
 #   UPLOADER    path to cgan_tfrecords_source_coop.py
 # Flags:

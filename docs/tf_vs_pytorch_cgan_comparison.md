@@ -3,9 +3,9 @@
 This document compares the two conditional-GAN codebases that sit side-by-side
 on this machine:
 
-- **TF version** — `/scratch/notebook/cGAN_tutorial/` (this repo). IFS → ICPAC
+- **TF version** — `https://github.com/icpac-igad/cGAN_tutorial` (this repo). IFS → ICPAC
   downscaling tutorial, TensorFlow 2.x with the legacy-Keras flag.
-- **PyTorch EP version** — `/scratch/notebook/CGAN_extreme_precipitation/`.
+- **PyTorch EP version** — `https://github.com/NMC-DAVE/CGAN_extreme_precipitation`.
   Codebase from Xu et al. (2026, *Wea. Forecasting* 41, 381–401, DOI
   10.1175/WAF-D-24-0199.1) — "Postprocessing for 24-Hour Advanced Forecasting
   of Extreme Precipitation Using Deep Learning Generative Models." Adapted from

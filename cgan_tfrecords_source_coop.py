@@ -24,7 +24,7 @@ Disk-frugal by design:
   The prep box is space-constrained. After a file is uploaded AND its remote
   size is confirmed to match the local file, the local copy is DELETED
   (`--clean`, on by default). Run this immediately after each year's
-  `write_data(...)` so the ~33 GB of 14-field TFRecords never piles up.
+  `write_data(...)` so the ~14-20 GB of 14-field TFRecords (~3.5-5 GB/yr) never piles up.
 
 Layout written to source.coop:
   s3://us-west-2.opendata.source.coop/<PREFIX>/
@@ -72,7 +72,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 # source.coop target — a real AWS S3 bucket in us-west-2 (same as the zarr routine)
 S3_BUCKET = os.getenv("SC_BUCKET", "us-west-2.opendata.source.coop")
-S3_PREFIX = os.getenv("SC_PREFIX", "e4drr-project/cgan-rfe2/tfrecords-14field-v1")
+# Published at https://source.coop/e4drr-project/forecasts/cgan_tfrecords_ou
+S3_PREFIX = os.getenv("SC_PREFIX", "e4drr-project/forecasts/cgan_tfrecords_ou")
 
 # Local sources on the prep box
 TFRECORDS_DIR = Path(os.getenv("TFRECORDS_DIR", "/data/CGAN/rfe_tfrecords"))

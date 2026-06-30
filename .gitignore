@@ -36,3 +36,15 @@ example_notebooks/pytorch_cgan/ecmwf_pytorch_cgan_*.json
 *.pkl
 *.parquet
 *.zarr/
+*.tfrecords
+
+# Local test artifacts / scratch
+local_tfrecords_test/
+2026-*-tfrecords-*.txt
+
+# Local python environments (the tf215gpu micromamba env lives outside the repo;
+# this guards any venv created inside the repo). NOTE: the tracked top-level
+# `env/` dir is project build config, NOT a python env, and is intentionally kept.
+.venv/
+.venv-*/
+venv/
