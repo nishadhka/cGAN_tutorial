@@ -29,21 +29,30 @@ from data_generator import DataGenerator as DataGeneratorFull
 from insitubatch import ensure_local_dir, obstore_store
 
 IMG_H, IMG_W = 384, 352
-
-# Same quartile bins write_data() uses to sort patches into 4 rain-intensity
-# classes (data.py's RFE2 2018 distribution, mm/hr after /24 conversion).
-# Applied here per whole-image mean rather than per-patch, since cropping no
-# longer happens at write time -- there is no patch yet to classify.
-RAIN_BINS = (0.0059, 0.0362, 0.0761)
+N_RAIN_CLASSES = 4
 
 
-def _rain_class(truth_log_image: np.ndarray) -> int:
-    """Dominant rain-intensity bin (0-3) for one day's whole truth image."""
-    truth_mean = denormalise(truth_log_image).mean()
-    for clss, edge in enumerate(RAIN_BINS):
-        if truth_mean < edge:
-            return clss
-    return len(RAIN_BINS)
+def _truth_mean(truth_log_image: np.ndarray) -> float:
+    """Whole-image mean rainfall (mm/hr) for one day's truth, log-transform undone."""
+    return float(denormalise(truth_log_image).mean())
+
+
+def _quantile_classes(means: np.ndarray, n_classes: int = N_RAIN_CLASSES) -> tuple[np.ndarray, list]:
+    """Digitize whole-image daily means into ``n_classes`` roughly-equal-count bins.
+
+    ``write_data()``'s fixed bins ``[0.0059, 0.0362, 0.0761]`` were tuned on
+    *per-patch* means (RFE2 2018 patch distribution) so a random 128x128 crop
+    lands roughly evenly across 4 classes. Applied to a *whole-domain* daily
+    mean instead -- there is no patch yet at write time, cropping is now a
+    batch_transform (Phase 3) -- those same edges skew almost everything into
+    the top classes: a full-domain mean is far less likely to sit near zero
+    than a small patch is. Empirically (this store, 2018-2021): 0/125/612/724
+    days in classes 0-3. Deriving the edges from this store's own quantiles
+    instead gives a ~balanced split by construction, whatever the domain/years.
+    """
+    edges = np.quantile(means, np.linspace(0, 1, n_classes + 1)[1:-1]).tolist()
+    classes = np.digitize(means, edges).astype("i1")
+    return classes, edges
 
 
 def write_zarr(years,
@@ -119,12 +128,11 @@ def write_zarr(years,
     group.attrs["lead_idx"] = int(LEAD_IDX)
     group.attrs["log_precip"] = bool(log_precip)
     group.attrs["fcst_norm"] = bool(fcst_norm)
-    group.attrs["rain_bins"] = list(RAIN_BINS)
 
     fcst_buf = np.empty((day_chunk, IMG_H, IMG_W, n_fcst_channels), dtype="f4")
     truth_buf = np.empty((day_chunk, IMG_H, IMG_W, 1), dtype="f4")
     mask_buf = np.empty((day_chunk, IMG_H, IMG_W), dtype=bool)
-    class_buf = np.empty((day_chunk,), dtype="i1")
+    all_means = np.empty((n_days,), dtype="f8")
 
     t0 = time.perf_counter()
     for start in range(0, n_days, day_chunk):
@@ -135,17 +143,37 @@ def write_zarr(years,
             fcst_buf[i] = sample[0]["lo_res_inputs"][0]
             truth_buf[i, ..., 0] = sample[1]["output"][0]
             mask_buf[i] = sample[1]["mask"][0]
-            class_buf[i] = _rain_class(sample[1]["output"][0])
+            all_means[start + i] = _truth_mean(sample[1]["output"][0])
         fcst_arr[start:stop] = fcst_buf[:n]
         truth_arr[start:stop] = truth_buf[:n]
         mask_arr[start:stop] = mask_buf[:n]
-        class_arr[start:stop] = class_buf[:n]
         elapsed = time.perf_counter() - t0
         rate = stop / elapsed if elapsed else 0.0
         print(f"  wrote {stop}/{n_days} days ({stop / n_days:.0%})  "
               f"{elapsed:.1f}s  {rate:.1f} days/s", flush=True)
 
+    # Deferred to a second pass over the (already in-memory) daily means: the
+    # quantile edges need every day's mean before any day can be classified.
+    classes, edges = _quantile_classes(all_means)
+    class_arr[:] = classes
+    group.attrs["rain_bins"] = edges
+    print(f"  rain_class quantile edges (mm/hr): {edges}", flush=True)
     print(f"done: {url} in {time.perf_counter() - t0:.1f}s", flush=True)
+
+
+def rebin_rain_class(url: str, n_classes: int = N_RAIN_CLASSES) -> list:
+    """Recompute ``rain_class`` in an already-written store from its ``truth``
+    array, without re-running the netCDF conversion. Fixes a store written
+    before this quantile-based classification existed (see ``_quantile_classes``).
+    """
+    group = zarr.open_group(store=obstore_store(url, read_only=False), mode="r+")
+    truth = group["truth"][:]  # (n_days, H, W, 1) -- small enough to hold in RAM
+    means = denormalise(truth).mean(axis=(1, 2, 3))
+    classes, edges = _quantile_classes(means, n_classes)
+    group["rain_class"][:] = classes
+    group.attrs["rain_bins"] = edges
+    print(f"rebin_rain_class: {url} -> edges (mm/hr) {edges}", flush=True)
+    return edges
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -159,11 +187,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-compress", action="store_true")
     p.add_argument("--limit-days", type=int, default=None,
                    help="truncate the date list -- smoke-test before a full run")
+    p.add_argument("--rebin-only", action="store_true",
+                   help="skip the netCDF conversion; just recompute rain_class "
+                        "on an already-written store at --url")
     return p
 
 
 if __name__ == "__main__":
     args = build_parser().parse_args()
     url = args.url or "file:///tank/projects/cGAN/zarr/run11_clim_meansd/"
-    write_zarr(args.years, url, day_chunk=args.day_chunk,
-              compress=not args.no_compress, limit_days=args.limit_days)
+    if args.rebin_only:
+        rebin_rain_class(url)
+    else:
+        write_zarr(args.years, url, day_chunk=args.day_chunk,
+                  compress=not args.no_compress, limit_days=args.limit_days)
