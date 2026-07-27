@@ -223,12 +223,39 @@ TF-only; worth remembering if throughput doesn't meet expectations.
   content-search verification method against literally-constant data, not a
   gap in the new pipeline.
 
-### Phase 5 — Wire into `setupdata.py` behind a switch
-- Add a `CGAN_DATA_BACKEND=zarr|tfrecords` env var, mirroring the existing
-  `CGAN_FIELD_SET` pattern in `data.py`, so `setup_batch_gen` can build
-  either the current `DataGenerator` or `InSituDataset` + `as_tf_dataset`.
-  Keep the tfrecords path alive as a fallback until a full run on the new
-  path reproduces run11's CRPS.
+### Phase 5 — Wire into `setupdata.py` behind a switch — **done**
+- `setupdata.py`: `CGAN_DATA_BACKEND=zarr|tfrecords` env var (default
+  `tfrecords`, mirroring `data.py`'s `CGAN_FIELD_SET` pattern) picks
+  `setup_batch_gen_zarr` or the untouched `setup_batch_gen` inside
+  `setup_data()`. **No tfrecords code was modified** —
+  `tfrecords_generator.py`/`write_data()`/`create_mixed_dataset()` are
+  completely unchanged; this only adds a new branch. Validation
+  (`setup_full_image_dataset`) needed no change either — it already reads
+  netCDF directly via `data_generator.DataGenerator`, never tfrecords.
+- **Real integration snag found, not a theoretical one:** insitubatch's own
+  `as_tf_dataset` infers its `output_signature` from the *source*
+  geometries (`fcst`/`truth`/`mask`/`rain_class` at full 384x352
+  resolution) — but `CropConstantsClassBalance` renames and reshapes
+  everything (crop to 128x128, `fcst`→`lo_res_inputs`, drops `rain_class`
+  after consuming it), so `as_tf_dataset`'s inferred signature would be
+  wrong. Wrote `zarr_tf_dataset.py`'s `as_cgan_tf_dataset` instead — a
+  direct ~10-line `tf.data.Dataset.from_generator` call declaring the
+  *transformed* signature — rather than patching insitubatch's inference to
+  see through an arbitrary renaming `batch_transform`.
+- Validated exactly as `train.py` consumes it
+  (`batch_gen_train.take(1).as_numpy_iterator()`): yields a genuine
+  `tf.data.Dataset` (`_PrefetchDataset`), `inputs={lo_res_inputs (8,128,128,28)
+  f32, hi_res_inputs (8,128,128,2) f32}`, `outputs={output (8,128,128,1) f32,
+  mask (8,128,128) bool}` — the exact nested shape/key structure
+  `DataGenerator` already produces. Confirmed the default (no env var) path
+  is byte-identical to before Phase 5: `CGAN_DATA_BACKEND` defaults to
+  `"tfrecords"`, and that branch calls the original, untouched
+  `setup_batch_gen`.
+- `autocoarsen` is intentionally **not** supported on the zarr backend
+  (raises `NotImplementedError` rather than silently ignoring it) — it was
+  untested/unused on the tfrecords path too
+  (`data_generator.DataGenerator` asserts `autocoarsen is False`), so this
+  isn't a regression, just an explicit scope boundary.
 
 ### Phase 6 — Benchmark before committing
 - Compare wall-clock time/checkpoint between Zarr+insitubatch and the
