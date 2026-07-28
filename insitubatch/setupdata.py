@@ -71,7 +71,10 @@ def setup_batch_gen_zarr(train_years,
     ds = InSituDataset(store, manifest, geometries=geoms,
                        batch_size=batch_size * CGAN_ZARR_OVERSAMPLE,
                        shuffle=True, batch_transforms=[transform])
-    return as_cgan_tf_dataset(ds.train, crop=CGAN_ZARR_CROP, n_fcst_channels=n_fcst_channels)
+    # repeat=True is required, not cosmetic: gan.py pulls ~384 batches per
+    # checkpoint from a single iterator, but one epoch of this store is only ~46.
+    return as_cgan_tf_dataset(ds, crop=CGAN_ZARR_CROP,
+                              n_fcst_channels=n_fcst_channels, split="train", repeat=True)
 
 
 def setup_full_image_dataset(years,

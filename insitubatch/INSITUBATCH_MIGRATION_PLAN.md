@@ -251,6 +251,71 @@ TF-only; worth remembering if throughput doesn't meet expectations.
   is byte-identical to before Phase 5: `CGAN_DATA_BACKEND` defaults to
   `"tfrecords"`, and that branch calls the original, untouched
   `setup_batch_gen`.
+### Phase 5b — pre-Phase-6 audit: two blockers found and fixed
+
+A deliberate re-verification before spending GPU time found **two defects that
+Phase 5's own validation had missed**, plus one subtle sampling bias. All fixed.
+
+**Blocker 1 — dataset exhaustion (would have crashed training in the first
+checkpoint).** `gan.py:185-198` calls `iter(batch_gen)` *once* then
+`.get_next()` ~`steps_per_checkpoint * (training_ratio + 1)` ≈ 384 times per
+checkpoint; `create_mixed_dataset()` ends in `ds.repeat()` so the tfrecords
+path is infinite. The zarr path was **finite** — measured: `OutOfRangeError`
+after exactly **46 batches**, i.e. inside the first checkpoint, and ~25600
+generator batches are needed for a full run. Phase 5 validated with
+`.take(1)`, which structurally cannot detect this. Fixed in
+`zarr_tf_dataset.py`: the generator now loops epochs forever, calling
+`set_epoch()` each pass (so every epoch reshuffles — the tfrecords path only
+ever shuffled within a fixed 64-sample buffer). Verified to 500 batches.
+
+**Blocker 2 — wrong classification primitive, which would have confounded
+Phase 6/7.** `write_data()` classifies **per patch** (every 128x128 crop gets
+its own bin), so `sample_from_datasets(weights=[.4,.3,.2,.1])` selects
+genuinely dry *patches*. Phases 1-3 instead classified **per day** (the stored
+`rain_class`) and then cropped randomly — not equivalent, because a random
+crop from the driest *day* is far wetter than the driest *crop*. Measured
+against the real run11 tfrecords: delivered patches were **median 1.86x /
+mean 1.25x wetter**. This is also the real reason the Phase 1 `rain_class`
+histogram looked wrong; rebinning by quantile fixed the symptom (counts) and
+missed the cause (wrong primitive). Fixed in `zarr_transforms.py`: crop all
+oversampled rows **first**, classify each crop with `write_data()`'s own
+per-patch bins `(0.0059, 0.0362, 0.0761)`, then select.
+
+**Sampling bias — deterministic quota rounding.** `np.round([3.2,2.4,1.6,0.8])`
+= `[3,2,2,1]` fixes the effective weights at `[.375,.25,.25,.125]` every batch,
+over-weighting the two wettest bins (predicted +19% mean from the class means;
+observed). `sample_from_datasets` draws each element *independently* with
+`p=weights`, so the exact equivalent is `rng.multinomial(batch_size, weights)`
+— now used.
+
+**Validation of the result.** Comparing class-conditional means (the clean
+discriminator, since it removes mixture effects) between the new pipeline and
+the real run11 tfrecords pools, over 2018:
+
+| class | zarr mean | tfrecords mean | ratio |
+|---|---|---|---|
+| 0 | 0.00166 | 0.00172 | 0.96x |
+| 1 | 0.01816 | 0.01844 | 0.98x |
+| 2 | 0.05459 | 0.05459 | 1.00x |
+| 3 | 0.19052 | 0.23108 | 0.82x |
+
+Classes 0-2 match essentially exactly, confirming per-patch classification,
+crop mechanics and normalisation all reproduce the old pipeline. Class 3 is
+the **unbounded** top bin (`>0.0761`, no upper edge) whose mean is dominated
+by extremes; the tfrecords baseline for it could only be sampled from the
+first ~400 patches of the class file, which — since `write_data()` iterates
+dates in order — is early-2018 only. That date bias, not a pipeline defect,
+explains the gap. (Earlier headline ratios in this doc's history that compared
+whole mixtures were measured against that same biased baseline and should not
+be read as pipeline error.)
+
+**Known, accepted residual:** natural crop-class frequency is
+`[.215,.234,.163,.387]`, so the `[.4,.3,.2,.1]` target over-requests class 0;
+at 4x oversample this caused **5.2%** of rows to be backfilled from other
+classes. Raising `CGAN_ZARR_OVERSAMPLE` reduces it, at the cost of read
+amplification — worth revisiting alongside the Phase 6 throughput numbers
+rather than in isolation.
+
 - `autocoarsen` is intentionally **not** supported on the zarr backend
   (raises `NotImplementedError` rather than silently ignoring it) — it was
   untested/unused on the tfrecords path too
