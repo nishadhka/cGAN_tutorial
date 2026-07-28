@@ -322,12 +322,65 @@ rather than in isolation.
   (`data_generator.DataGenerator` asserts `autocoarsen is False`), so this
   isn't a regression, just an explicit scope boundary.
 
-### Phase 6 — Benchmark before committing
-- Compare wall-clock time/checkpoint between Zarr+insitubatch and the
-  existing GZIP tfrecords pipeline **on the actual RTX 5000 box**.
-  insitubatch's headline win (~8x, per its README) is measured against cloud
-  object storage; on local NVMe with TFRecords already prefetching in
-  parallel, the win may be smaller or a wash. Measure, don't assume.
+### Phase 6 — Benchmark — **done (loader half); GPU half deferred**
+
+The plan said "measure, don't assume". Measured — and the result **contradicts
+the migration's stated premise**. `bench_loaders.py`, batch_size 8, CUDA
+disabled, 300 timed batches after 20 warmup:
+
+| backend | batches/s | samples/s | per-batch | time to 1st batch |
+|---|---|---|---|---|
+| tfrecords (GZIP) | **102.6** | **820.7** | 9.7 ms | 0.97 s |
+| zarr, oversample=4 (default) | 1.29 | 10.3 | 773 ms | 3.81 s |
+| zarr, oversample=1 | 5.16 | 41.3 | 194 ms | 3.61 s |
+
+**Zarr+insitubatch is ~80x slower** at feeding batches, and insitubatch's
+"first batch in ~ms not seconds" claim also does not hold here (3.8 s vs
+0.97 s). Root cause is read amplification, confirmed rather than assumed: a
+zarr sample is a **full** 384x352x28 image (15.8 MB) but training uses only a
+128x128 crop (1.9 MB, **12%**), so oversample=4 reads 506 MB/batch to deliver
+15.3 MB (**33x**), while tfrecords stores **pre-cropped** patches and reads
+~1x. Dropping oversample 4->1 cuts amplification 33x->8x and raises throughput
+1.29->5.16 batches/s — a 4.0x gain for a 4.1x amplification cut, i.e. almost
+exactly linear, which pins the bottleneck on bytes read.
+
+Note this is **architectural, not a tuning miss**: insitubatch's unit of work
+is the *sample* (`ArrayGeometry.slot_shape` assembles the whole
+`inner_shape`), so it has no spatial-subsetting path. Chunking the store
+spatially would not let it read only the crop. Getting ~1x would mean storing
+pre-cropped patches as the samples — i.e. reinventing tfrecords in a zarr
+container, and giving up the fresh-crop-per-epoch benefit.
+
+**But throughput is not the binding constraint.** From run11's own
+checkpoints (17 checkpoints x 1024 samples over 24.3 h wall-clock):
+
+- training demand = **0.60 samples/s** (0.07 batches/s; ~13 s of GPU work per batch)
+- tfrecords supplies 820.7 samples/s -> **1377x headroom**
+- zarr @ oversample=4 supplies 10.3 samples/s -> **17x headroom**
+- zarr @ oversample=1 supplies 41.3 samples/s -> **69x headroom**
+
+So this training loop is **GPU-bound by three orders of magnitude**, and even
+the 80x-slower backend has ~17x more capacity than the GPU can consume.
+Switching backends should not measurably change training wall-clock.
+
+**Consequence for the rationale.** The premise "use zarr+insitubatch to feed
+the GPU properly" is **not supported** — the GPU was never data-starved. The
+migration's defensible benefits are the *other* ones: no tfrecords
+regeneration when the field set or crop size changes (cf.
+`RUN08_NOCAPE_STEPS.md`), a fresh random crop every epoch instead of a frozen
+patch set, and a cloud-native store. Those are real, but they are
+maintainability arguments, not throughput ones.
+
+**Caveats.** Measured while an unrelated 8 h GPU job was running (CPU load
+1.80/128 cores, so contention was low, but both stores share one ZFS pool);
+page-cache state was not controlled. The 0.60 samples/s demand figure comes
+from checkpoint mtimes and would include any stall/restart gaps, so it may
+understate demand — but not by the ~3 orders of magnitude that would change
+the conclusion. The **end-to-end wall-clock-per-checkpoint on an idle GPU is
+still unmeasured**: `/tank/projects/GPU_RESERVED.txt` asks that no GPU work be
+started without checking first, and the card was at 28.7/30.7 GB and 100%
+utilisation with a guard process set to auto-restart the job, so starting a
+CUDA job would risk OOM-ing someone else's run.
 
 ### Phase 7 — Cut over
 - Once a full `num_samples=204800` run on the new path matches run06/run11
