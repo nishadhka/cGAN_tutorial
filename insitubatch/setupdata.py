@@ -14,8 +14,21 @@ if CGAN_DATA_BACKEND not in ("tfrecords", "zarr"):
 
 # Zarr backend defaults -- only read when CGAN_DATA_BACKEND=zarr is actually selected.
 CGAN_ZARR_URL = os.environ.get("CGAN_ZARR_URL", "file:///tank/projects/cGAN/zarr/run11_clim_meansd/")
-CGAN_ZARR_OVERSAMPLE = int(os.environ.get("CGAN_ZARR_OVERSAMPLE", "4"))
+# Default 8 (not 4) so that with CROPS_PER_IMAGE=8 the loader still reads 8
+# *distinct* images per batch. The pre-multi-crop code read 32 images to build a
+# 32-candidate pool, i.e. every candidate came from a different day; taking
+# several crops per image trades some of that day-diversity for throughput, and
+# keeping n_images=8 holds the trade to a sensible point (measured: 3.48
+# batches/s = ~46x the training loop's demand, distribution parity 0.99x median).
+CGAN_ZARR_OVERSAMPLE = int(os.environ.get("CGAN_ZARR_OVERSAMPLE", "8"))
 CGAN_ZARR_CROP = int(os.environ.get("CGAN_ZARR_CROP", "128"))
+# How many random crops to cut from each loaded image. A stored sample is a full
+# 384x352 image but a crop uses only 12% of it, so 1 crop/image throws away 88%
+# of every byte read (Phase 6: that is why the zarr loader measured ~80x slower
+# than tfrecords). Raising this cuts bytes-read-per-crop ~linearly and enlarges
+# the class-selection pool; the cost is that crops sharing an image are
+# correlated, so keep enough distinct images per batch.
+CGAN_ZARR_CROPS_PER_IMAGE = int(os.environ.get("CGAN_ZARR_CROPS_PER_IMAGE", "8"))
 
 
 # Incredibly slim wrapper around tfrecords_generator.DataGenerator.  Can probably remove...
@@ -65,11 +78,18 @@ def setup_batch_gen_zarr(train_years,
     n_fcst_channels = geoms["fcst"].inner_shape[-1]
 
     manifest = build_year_split_manifest(CGAN_ZARR_URL, train_years, val_years=())
+    cpi = CGAN_ZARR_CROPS_PER_IMAGE
     transform = CropConstantsClassBalance(crop=CGAN_ZARR_CROP,
                                           class_weights=tuple(weights),
-                                          target_batch_size=batch_size)
+                                          target_batch_size=batch_size,
+                                          crops_per_image=cpi)
+    # Candidate crops = images_read * cpi, and we want batch_size*OVERSAMPLE of
+    # them -- so reading cpi times fewer images gives the SAME selection pool for
+    # a fraction of the IO. Floor at 2 images so a batch is never drawn from a
+    # single day.
+    n_images = max(2, -(-batch_size * CGAN_ZARR_OVERSAMPLE // cpi))
     ds = InSituDataset(store, manifest, geometries=geoms,
-                       batch_size=batch_size * CGAN_ZARR_OVERSAMPLE,
+                       batch_size=n_images,
                        shuffle=True, batch_transforms=[transform])
     # repeat=True is required, not cosmetic: gan.py pulls ~384 batches per
     # checkpoint from a single iterator, but one epoch of this store is only ~46.

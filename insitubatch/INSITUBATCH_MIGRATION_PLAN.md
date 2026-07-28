@@ -371,6 +371,41 @@ regeneration when the field set or crop size changes (cf.
 patch set, and a cloud-native store. Those are real, but they are
 maintainability arguments, not throughput ones.
 
+### Phase 6b — making the zarr path fast enough (multi-crop)
+
+The 12%-utilisation waste is fixable without touching the store: cut **several**
+crops from each image you load, decoupling "images read" from "candidate crops"
+(`crops_per_image`, default 8). Same selection pool, a fraction of the IO:
+
+| config | images read/batch | batches/s | samples/s | headroom vs 0.60 samples/s |
+|---|---|---|---|---|
+| original (os=4, cpi=1) | 32 | 1.29 | 10.3 | 17x |
+| os=4, cpi=8 | 4 | **7.25** | 58.0 | 97x |
+| **os=8, cpi=8 (new default)** | 8 | **3.48** | 27.9 | **46x** |
+
+A **5.6x speedup** at cpi=8 for a one-line change. The default keeps
+`n_images=8` so a batch still spans 8 distinct days; the pre-multi-crop code
+drew every candidate from a different day, so this does trade *some*
+day-diversity for throughput — that is the real cost of this optimisation, and
+why the default is `os=8` rather than the faster `os=4`.
+
+It also **improved distribution parity as a side effect** (a bigger candidate
+pool means fewer class-quota shortfalls and hence less backfill): median ratio
+vs the real tfrecords mixture went **0.83x -> 0.99x**, mean **0.83x -> 0.95x**.
+
+**Remaining levers, not yet applied** (each needs a store rewrite, ~10 min):
+- **Drop or change compression** — Zstd earns only **1.16x** here (22.1 GB raw ->
+  19 GB), so decompressing 411 MB chunks is close to pure CPU overhead.
+  `compressors=None` (or lz4) trades ~3 GB of disk for no decode cost.
+- **float16 for `fcst`** — halves 22.1 GB -> 11 GB and halves bytes read; inputs
+  are already normalised O(1), so precision headroom is ample (keep `truth` f32).
+- **Smaller `day_chunk`** — 32 days/chunk is a 411 MB chunk; this does not change
+  bytes-per-epoch (every day is touched once) but does cut per-read latency and
+  pool memory.
+- **Last resort — store pre-cropped patches as the samples**: gives 1x
+  amplification and would match tfrecords speed, but abandons fresh-crop-per-epoch
+  and is effectively tfrecords in a zarr container.
+
 **Caveats.** Measured while an unrelated 8 h GPU job was running (CPU load
 1.80/128 cores, so contention was low, but both stores share one ZFS pool);
 page-cache state was not controlled. The 0.60 samples/s demand figure comes

@@ -57,11 +57,21 @@ class CropConstantsClassBalance:
     from ``InSituDataset`` (the oversample factor) so each of the 4 rain
     classes usually has enough rows present to fill its share -- e.g.
     ``batch_size=32`` upstream for ``target_batch_size=8`` (4x oversample).
+
+    ``crops_per_image`` takes several independent random crops from each loaded
+    image instead of one. This is the main throughput lever (Phase 6): a stored
+    sample is a full 384x352 image (15.8 MB) but a crop uses 1.9 MB (12%), so
+    taking 1 crop per image wastes 88% of every byte read. Taking C crops per
+    image cuts bytes-read-per-delivered-crop by ~C while *enlarging* the
+    class-selection pool. Trade-off: crops sharing an image are spatially
+    correlated, so a batch drawn from few images is less diverse -- keep enough
+    distinct images per batch (upstream batch_size) that this stays acceptable.
     """
 
     crop: int = 128
     class_weights: tuple[float, ...] = (0.4, 0.3, 0.2, 0.1)
     target_batch_size: int = 8
+    crops_per_image: int = 1
     seed: int | None = None
     _rng: np.random.Generator = field(init=False, repr=False)
     _constants: np.ndarray | None = field(default=None, init=False, repr=False)
@@ -136,7 +146,9 @@ class CropConstantsClassBalance:
         # (it is still co-batched, and remains useful for coarse day-level
         # filtering, but it cannot reproduce per-patch class semantics).
         fcst, truth, mask = batch.arrays["fcst"], batch.arrays["truth"], batch.arrays["mask"]
-        n_all = fcst.shape[0]
+        n_img = fcst.shape[0]
+        cpi = max(1, self.crops_per_image)
+        n_all = n_img * cpi          # candidate crops, not images
         crop = self.crop
 
         all_fcst = np.empty((n_all, crop, crop, fcst.shape[-1]), dtype=fcst.dtype)
@@ -144,15 +156,18 @@ class CropConstantsClassBalance:
         all_mask = np.empty((n_all, crop, crop), dtype=mask.dtype)
         all_const = np.empty((n_all, crop, crop, self._constants.shape[-1]),
                              dtype=self._constants.dtype)
+        # provenance: which loaded image each candidate crop came from
+        src = np.repeat(np.arange(n_img), cpi)
 
         idh = self._rng.integers(0, IMG_H - crop + 1, size=n_all)
         idw = self._rng.integers(0, IMG_W - crop + 1, size=n_all)
-        for i in range(n_all):
-            h0, w0 = int(idh[i]), int(idw[i])
-            all_fcst[i] = fcst[i, h0:h0 + crop, w0:w0 + crop, :]
-            all_truth[i] = truth[i, h0:h0 + crop, w0:w0 + crop, :]
-            all_mask[i] = mask[i, h0:h0 + crop, w0:w0 + crop]
-            all_const[i] = self._constants[h0:h0 + crop, w0:w0 + crop, :]
+        for k in range(n_all):
+            i = int(src[k])
+            h0, w0 = int(idh[k]), int(idw[k])
+            all_fcst[k] = fcst[i, h0:h0 + crop, w0:w0 + crop, :]
+            all_truth[k] = truth[i, h0:h0 + crop, w0:w0 + crop, :]
+            all_mask[k] = mask[i, h0:h0 + crop, w0:w0 + crop]
+            all_const[k] = self._constants[h0:h0 + crop, w0:w0 + crop, :]
 
         idx = self._select_indices(self._classify_crops(all_truth))
 
@@ -163,5 +178,5 @@ class CropConstantsClassBalance:
                 "output": all_truth[idx],
                 "mask": all_mask[idx],
             },
-            sample_indices=batch.sample_indices[idx],
+            sample_indices=batch.sample_indices[src[idx]],
         )
