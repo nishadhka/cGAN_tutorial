@@ -406,6 +406,83 @@ vs the real tfrecords mixture went **0.83x -> 0.99x**, mean **0.83x -> 0.95x**.
   amplification and would match tfrecords speed, but abandons fresh-crop-per-epoch
   and is effectively tfrecords in a zarr container.
 
+### Phase 6c — end-to-end on the GPU: the backend makes no difference
+
+`bench_train_step.py` builds the real run11 model (same `setupmodel.setup_model`
+call as `main.py`) and times actual `model.train()` iterations:
+
+| backend | s/iter |
+|---|---|
+| tfrecords | 3.62 |
+| zarr | 3.64 |
+
+**0.6% apart — indistinguishable.** The deferred question is settled: the data
+backend does not affect training wall-clock, because the loop is GPU-bound.
+
+**Correction to the numbers above.** Actual GPU speed is ~6x faster than the
+estimate derived from run11's checkpoint mtimes (that 24.3 h span must have
+included stalls). Real demand is **6.6 samples/s** (3 batch pulls x 8 samples
+per 3.62 s iteration), not 0.60. So the true loader headroom is **~4.2x** for
+zarr @ os=8/cpi=8 and ~124x for tfrecords — not the 46x/1377x quoted earlier.
+4.2x is still sufficient, as the end-to-end tie above demonstrates, but the
+margin is much thinner than first stated.
+
+### Phase 6d — where the 3.6 s/iter actually goes
+
+Sweep at batch 8 (tfrecords backend, GPU otherwise ~19% busy with an unrelated
+eval job, so treat these as relative not absolute):
+
+| change | s/iter | speedup | free? |
+|---|---|---|---|
+| baseline (gen 64 / disc 256, ens 8, ratio 2) | 3.63 | — | |
+| `filters_disc` 256 -> **64** | **1.44** | **2.52x** | no — capacity change |
+| XLA + `filters_disc` 128 | 1.60 | 2.27x | no |
+| `filters_disc` 256 -> **128** | **2.04** | **1.78x** | no — capacity change |
+| `training_ratio` 2 -> 1 | 2.41 | 1.51x | no — changes WGAN dynamics |
+| **XLA JIT alone** | **2.85** | **1.27x** | ~yes (numerics only) |
+| `filters_gen` 64 -> 32 | 3.28 | 1.11x | no |
+| `ensemble_size` 8 -> 2 | 3.31 | 1.10x | no |
+| `ensemble_size` 8 -> 4 | 3.45 | 1.05x | no |
+| batch 16 or 32 | **OOM** | — | |
+
+**The discriminator dominates, not the generator ensemble.** This contradicted
+the obvious guess: `ensemble_size` 8->2 (4x less generator work) buys only
+1.10x, and `filters_gen` 64->32 only 1.11x, while `filters_disc` 256->128 buys
+1.78x. The cost is concentrated in the disc — plausibly the WGAN-GP gradient
+penalty, which needs a second backward pass through it.
+
+**Batch size cannot be raised** on this card at disc=256 — both 16 and 32 hit
+`ResourceExhausted`, so the usual "bigger batch, better utilisation" lever is
+closed unless the disc shrinks first.
+
+**Mixed precision does not currently work.** `mixed_float16` dies with a dtype
+`TypeError` in the WGAN-GP path (`layers.py:RandomWeightedAverage` draws
+float32 interpolation weights and multiplies them by float16 activations).
+Making that one layer dtype-agnostic is not sufficient — a further mismatch
+follows in the same graph, so enabling AMP needs a small dtype audit of
+`gan.py`/`layers.py`. Payoff is potentially the largest single win (Ada tensor
+cores), but GANs with gradient penalties are known to be fp16-fragile, so it
+should be treated as an experiment with a loss-curve check, not a flag flip.
+
+**Is `filters_disc=256` earning its 1.78x cost?** The existing arch sweep does
+**not** establish that it is:
+
+| run | gen/disc | best CRPS | checkpoints |
+|---|---|---|---|
+| run11 | 64/256 | 0.0671 | 30 |
+| run06 | 64/256 | 0.0719 | 200 |
+| arch_128_512 | 128/512 | 0.0750 | 80 |
+| arch_8_32 | 8/32 | 0.0783 | 80 |
+| arch_32_128 | 32/128 | 0.0804 | 80 |
+| arch_16_64 | 16/64 | 0.0909 | 80 |
+
+The `arch_*` runs are screening runs on a different (shorter) schedule than
+run11/run06, so they are **not** directly comparable to 0.0671. But among
+themselves the ordering is noisy — 8/32 beats both 32/128 and 16/64 — which
+means capacity was not cleanly determining CRPS at that budget, and **64/128
+has never actually been tested**. Given it is 1.78x faster, that is the single
+highest-value experiment available.
+
 **Caveats.** Measured while an unrelated 8 h GPU job was running (CPU load
 1.80/128 cores, so contention was low, but both stores share one ZFS pool);
 page-cache state was not controlled. The 0.60 samples/s demand figure comes
