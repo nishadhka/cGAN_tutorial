@@ -15,14 +15,18 @@ VD=${VD_LOCAL:-$HOME/icechunk-local/ecmwf-ifs-0p1-icechunk-vd}
 G=https://storage.googleapis.com/ecmwf-open-data
 for c in "$@"; do
   d=${c:0:8}; r=${c:8:2}; last=$([ $r = 00 -o $r = 12 ] && echo 360 || echo 144)
-  echo "=== $c waiting for the last step's 4 .index files $(date -u +%FT%TZ)"
+  echo "=== $c waiting for the last step's 4 .index and 4 .grib2 files $(date -u +%FT%TZ)"
   for i in $(seq 1 120); do          # up to 10 h, every 5 min
     n=0
+    # the .grib2 too: on 2026-11-08 GCS had the 360 h .index a minute before
+    # its .grib2, and step1 --verify then failed on a reference into it
     for f in enfo/${d}${r}0000-${last}h-enfo-ef-pl enfo/${d}${r}0000-${last}h-enfo-ef-sfc \
              oper/${d}${r}0000-${last}h-oper-fc-pl oper/${d}${r}0000-${last}h-oper-fc-sfc; do
-      [ "$(curl -s -o /dev/null -w '%{http_code}' -I $G/$d/${r}z/ifs/0p1/$f.index)" = 200 ] && n=$((n+1))
+      for x in index grib2; do
+        [ "$(curl -s -o /dev/null -w '%{http_code}' -I $G/$d/${r}z/ifs/0p1/$f.$x)" = 200 ] && n=$((n+1))
+      done
     done
-    [ $n = 4 ] && break
+    [ $n = 8 ] && n=4 && break
     sleep 300
   done
   [ $n = 4 ] || { echo "=== $c NOT PUBLISHED after 10 h"; continue; }

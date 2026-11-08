@@ -29,7 +29,8 @@ def sections(log):
     out, cur = {}, None
     for ln in open(log, errors="replace"):
         ln = ln.rstrip("\n")
-        m = re.match(r"#{16} (\d{8}) (\d\d)z\s+(\S+)", ln)
+        # the last section of a cycle wins (a rerun after a failure)
+        m = re.match(r"#{16} (\d{8}) (\d\d)z.*?(\d{4}-\d\d-\d\dT\S+Z)\s*$", ln)
         if m:
             cur = m.group(1)
             out[cur] = (m.group(3), [])

@@ -62,3 +62,10 @@ cycle	products	stage	seconds	finished_utc
 20261107T00z	jurre-6h+mvua-7d	step7_jurre-6h	3	2026-11-08T08:33:50Z
 20261107T00z	jurre-6h+mvua-7d	step7_mvua-7d	7	2026-11-08T08:33:57Z
 20261107T00z	jurre-6h+mvua-7d	total	643	2026-11-08T08:33:57Z
+20261108T00z	jurre-6h+mvua-7d	step1_virtual	1	2026-11-08T13:48:53Z
+20261108T00z	jurre-6h+mvua-7d	step4_realize	435	2026-11-08T13:56:08Z
+20261108T00z	jurre-6h+mvua-7d	step5_check	22	2026-11-08T13:56:30Z
+20261108T00z	jurre-6h+mvua-7d	step6_netcdf	54	2026-11-08T13:57:24Z
+20261108T00z	jurre-6h+mvua-7d	step7_jurre-6h	4	2026-11-08T13:57:28Z
+20261108T00z	jurre-6h+mvua-7d	step7_mvua-7d	8	2026-11-08T13:57:36Z
+20261108T00z	jurre-6h+mvua-7d	total	524	2026-11-08T13:57:36Z

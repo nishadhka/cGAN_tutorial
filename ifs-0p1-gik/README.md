@@ -32,6 +32,19 @@ It has been cut down to this one box and these 14 fields; §12 lists what came f
 
 ## 0. Measured
 
+### 2026-11-08, daily end-to-end continued, ten cycles 20261030–1108 00z
+
+Report: **[`runs/2026-11-08-local-10day-endtoend.md`](runs/2026-11-08-local-10day-endtoend.md)**; timings in [`runs/2026-11-08-local-10day-timing.tsv`](runs/2026-11-08-local-10day-timing.tsv). This used the same setup as the run below. The last cycle, 20261108, was taken as soon as ECMWF finished publishing it.
+
+| | Mean per cycle | Range |
+|---|---|---|
+| step 4, realize 21,420 messages (~29.4–30.2 GB fetched) | 485 s | 375–689 s |
+| **total** | **9.9 min** | **8.2–13.4 min**; 1.65 h for all ten |
+
+- **Every cycle passed step 5.**
+- **The four fastest cycles, 20261030–1102,** had S3 answering quickly: GET ~0.68 s, ~57 msg/s, step 4 ~377 s. Only 43% of messages came from GCS overall.
+- **20261108 had to be rerun once.** GCS publishes a step's `.index` before its `.grib2`, so step 1's read-back failed on a reference into a file that was not yet there. `step1_append_when_published.sh` now waits for the `.grib2` files too.
+
 ### 2026-10-30, daily end-to-end, local mode with no cluster, nine cycles 20261021–29 00z
 
 Full report: **[`runs/2026-10-30-local-9day-endtoend.md`](runs/2026-10-30-local-9day-endtoend.md)**. It gives one section per date, plus the commands, code commit, environment and weights. Per-stage seconds are in [`runs/2026-10-30-local-9day-timing.tsv`](runs/2026-10-30-local-9day-timing.tsv).

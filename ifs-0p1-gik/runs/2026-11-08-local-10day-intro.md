@@ -4,7 +4,9 @@ The same end-to-end run as [`2026-10-30-local-9day-endtoend.md`](2026-10-30-loca
 (20261021–29), continued for the next cycles: 00z from 20261030 to 20261108,
 run one after the other on 2026-11-08 as a daily job would run them. The last
 cycle, 20261108, was taken as soon as ECMWF had published it: the driver
-waited for the four 360 h `.index` files, checking every 5 min. The summary and the per-cycle sections are generated from the run's own
+waited for the four 360 h `.index` files, checking every 5 min (see Notes: the `.grib2` files can come later).
+
+The summary and the per-cycle sections are generated from the run's own
 log, timing file and stores by [`make_local_run_report.py`](make_local_run_report.py)
 (none of their numbers is typed in); the sections from here to "Notes" come from
 [`2026-11-08-local-10day-intro.md`](2026-11-08-local-10day-intro.md).
@@ -26,7 +28,7 @@ export PY=/srv/state/ifs0p1/venv/bin/python TFPY=/srv/state/ifs0p1/venv-infer/bi
 export IFS0P1_LOCAL_ROOT=/srv/state/ifs0p1/icechunk OUTDIR=/srv/state/ifs0p1/nc9 GAN_OUTDIR=/srv/state/ifs0p1/gan9
 export TIMING=/srv/state/ifs0p1/timing10.tsv BUILD_VD=1 PRODUCTS="jurre-6h mvua-7d"
 for d in 20261030 20261031 20261101 20261102 20261103 20261104 20261105 20261106 20261107 20261108; do
-  # (run10.sh first waits for $d's four 360 h .index files on GCS)
+  # (run10.sh first waits for $d's four 360 h .index files on GCS; 20261108 was rerun once the .grib2 were there too)
   bash run_local.sh $d
 done
 ```
@@ -76,4 +78,15 @@ just before the generator. The weights were located during the run:
   the 0.25° run was complete, but no 0.1° file yet. The 0.1° stream is the
   later of the two (20261107's last 0.1° `.index` is stamped 13:25 UTC), so
   the driver waited for it.
+- **20261108: the first attempt failed and the rerun passed.**
+  - The driver started at 13:44 UTC, as soon as the four 360 h `.index` files
+    were on GCS. GCS had published them **before the `.grib2` files**.
+  - step1 committed the cycle to the virtual store (742,478 refs, 44 s). Its
+    `--verify` read-back then failed on 1 of 8 chunks (`r600 m50 +360 h`,
+    "error fetching virtual reference"), so `run_local.sh` stopped.
+  - Once all four 360 h `.grib2` were on GCS (13:48 UTC) the cycle was rerun.
+    step1 found it already in the store (1 s), and step5 checked 8 random
+    messages bit-exact against it.
+  - The section below is the rerun. `step1_append_when_published.sh` now waits
+    for the `.grib2` files too.
 - The per-stage seconds are also in [`2026-11-08-local-10day-timing.tsv`](2026-11-08-local-10day-timing.tsv).

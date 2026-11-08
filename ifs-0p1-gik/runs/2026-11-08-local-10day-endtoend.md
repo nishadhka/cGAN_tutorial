@@ -1,4 +1,4 @@
-# Local end-to-end run, daily cycles 20261030–1108 00z, no cluster (in progress: 9 of 10 done; 20261108 waiting for ECMWF)
+# Local end-to-end run, 10 daily cycles 20261030–1108 00z, no cluster
 
 ## Summary, seconds per stage
 
@@ -13,8 +13,9 @@
 | 20261105 00z | 49 | 552 | 22 | 55 | 3 | 10 | **691** (11.5 min) | 38.8 | 29.67 | PASS |
 | 20261106 00z | 47 | 689 | 21 | 43 | 2 | 3 | **805** (13.4 min) | 31.1 | 29.69 | PASS |
 | 20261107 00z | 40 | 524 | 20 | 49 | 3 | 7 | **643** (10.7 min) | 41.0 | 29.41 | PASS |
+| 20261108 00z | 1 | 435 | 22 | 54 | 4 | 8 | **524** (8.7 min) | 49.3 | 29.43 | PASS |
 
-9 cycles: total mean **10.1 min**, min 8.2, max 13.4; all 1.51 h.
+10 cycles: total mean **9.9 min**, min 8.2, max 13.4; all 1.65 h.
 
 ## About this run
 
@@ -22,7 +23,9 @@ The same end-to-end run as [`2026-10-30-local-9day-endtoend.md`](2026-10-30-loca
 (20261021–29), continued for the next cycles: 00z from 20261030 to 20261108,
 run one after the other on 2026-11-08 as a daily job would run them. The last
 cycle, 20261108, was taken as soon as ECMWF had published it: the driver
-waited for the four 360 h `.index` files, checking every 5 min. The summary and the per-cycle sections are generated from the run's own
+waited for the four 360 h `.index` files, checking every 5 min (see Notes: the `.grib2` files can come later).
+
+The summary and the per-cycle sections are generated from the run's own
 log, timing file and stores by [`make_local_run_report.py`](make_local_run_report.py)
 (none of their numbers is typed in); the sections from here to "Notes" come from
 [`2026-11-08-local-10day-intro.md`](2026-11-08-local-10day-intro.md).
@@ -44,7 +47,7 @@ export PY=/srv/state/ifs0p1/venv/bin/python TFPY=/srv/state/ifs0p1/venv-infer/bi
 export IFS0P1_LOCAL_ROOT=/srv/state/ifs0p1/icechunk OUTDIR=/srv/state/ifs0p1/nc9 GAN_OUTDIR=/srv/state/ifs0p1/gan9
 export TIMING=/srv/state/ifs0p1/timing10.tsv BUILD_VD=1 PRODUCTS="jurre-6h mvua-7d"
 for d in 20261030 20261031 20261101 20261102 20261103 20261104 20261105 20261106 20261107 20261108; do
-  # (run10.sh first waits for $d's four 360 h .index files on GCS)
+  # (run10.sh first waits for $d's four 360 h .index files on GCS; 20261108 was rerun once the .grib2 were there too)
   bash run_local.sh $d
 done
 ```
@@ -94,6 +97,17 @@ just before the generator. The weights were located during the run:
   the 0.25° run was complete, but no 0.1° file yet. The 0.1° stream is the
   later of the two (20261107's last 0.1° `.index` is stamped 13:25 UTC), so
   the driver waited for it.
+- **20261108: the first attempt failed and the rerun passed.**
+  - The driver started at 13:44 UTC, as soon as the four 360 h `.index` files
+    were on GCS. GCS had published them **before the `.grib2` files**.
+  - step1 committed the cycle to the virtual store (742,478 refs, 44 s). Its
+    `--verify` read-back then failed on 1 of 8 chunks (`r600 m50 +360 h`,
+    "error fetching virtual reference"), so `run_local.sh` stopped.
+  - Once all four 360 h `.grib2` were on GCS (13:48 UTC) the cycle was rerun.
+    step1 found it already in the store (1 s), and step5 checked 8 random
+    messages bit-exact against it.
+  - The section below is the rerun. `step1_append_when_published.sh` now waits
+    for the `.grib2` files too.
 - The per-stage seconds are also in [`2026-11-08-local-10day-timing.tsv`](2026-11-08-local-10day-timing.tsv).
 
 ## 20261030 00z
@@ -212,4 +226,17 @@ Run 2026-11-08T08:23:14Z → 2026-11-08T08:33:57Z, **643 s (10.7 min)**.
 | step6_sewaa_netcdf.py | 49 | `cgan-ifs-6h-ens/IFS_20261107_00Z.nc` 46 MB, `cgan-ifs-7d-ens/IFS_20261107_00Z.nc` 282 MB (51 members, sd ddof 0) |
 | step7_infer.py jurre-6h `--dry-run` | 3 | dry run  OK: 4 windows of finite 1x384x352x56 input in 2s |
 | step7_infer.py mvua-7d `--dry-run` | 7 | dry run  OK: 7 windows of finite 1x384x352x28 input in 7s |
+
+## 20261108 00z
+
+Run 2026-11-08T13:48:52Z → 2026-11-08T13:57:36Z, **524 s (8.7 min)**.
+
+| Stage | s | What happened |
+|---|---:|---|
+| step1_build_virtual.py | 1 | —; virtual snapshot `—`; read-back — chunks equal a direct decode |
+| step4_realize.py `--no-cluster --threads 12` | 435 | 14 fields x 30 steps = 420 blocks x 51 members = 21,420 messages; 49.3 msg/s; fetched 29.43 of 43.71 GB whole-message bytes (saved 32.7%); 21,402 GETs (2 top-ups), 3,111 of the first 21,400 messages (counter saved every 200) read from the GCS copy after AWS 503 Slow Down; store `4CTKP7PM3JW0WYE47A50`, 2.76 GB on disk |
+| step5_check.py `--samples 8` | 22 | yes -- 420/420 chunks written; 8/8 bit-exact vs whole messages through the virtual store; **PASS** |
+| step6_sewaa_netcdf.py | 54 | `cgan-ifs-6h-ens/IFS_20261108_00Z.nc` 46 MB, `cgan-ifs-7d-ens/IFS_20261108_00Z.nc` 284 MB (51 members, sd ddof 0) |
+| step7_infer.py jurre-6h `--dry-run` | 4 | dry run  OK: 4 windows of finite 1x384x352x56 input in 2s |
+| step7_infer.py mvua-7d `--dry-run` | 8 | dry run  OK: 7 windows of finite 1x384x352x28 input in 7s |
 
