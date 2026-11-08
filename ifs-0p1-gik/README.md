@@ -38,7 +38,7 @@ Report: **[`runs/2026-11-08-local-10day-endtoend.md`](runs/2026-11-08-local-10da
 
 | | Mean per cycle | Range |
 |---|---|---|
-| step 4, realize 21,420 messages (~29.4–30.2 GB fetched) | 485 s | 375–689 s |
+| step 4, realize 21,420 messages (~29.4–30.2 GB fetched) | 473 s | 375–689 s |
 | **total** | **9.9 min** | **8.2–13.4 min**; 1.65 h for all ten |
 
 - **Every cycle passed step 5.**
