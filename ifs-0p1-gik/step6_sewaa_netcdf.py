@@ -16,6 +16,14 @@ for the 14 fields cape cp mcc sp ssr t2m tciw tclw tcrw tcw tcwv tp u700 v700,
 on the TF cGAN frame (each point the mean of the 4 surrounding 0.1 deg points,
 as step6_make_cgan_netcdf.py --frame tf).
 
+Mean and sd are taken over members on the native 0.1 deg grid, and the two
+fields are then put on the frame (--sd-grid native, the default). That is how the
+operational files are made: against Oxford's IFS_20261026_00Z.nc (the first
+mirror in icpac-igad/SEWAA-forecasts run_forecast.py) the sd agrees within ~1%
+this way, but is 2-11% low when each member is put on the frame first
+(--sd-grid frame, this script before 2026-11-09), because the 4-point mean
+smooths every member. The mean is the same either way.
+
 What the reference scripts need (vendor/PROVENANCE.md, vendor/ensemble_cgan/reference/):
   - Accumulated fields (tp, cp, ssr) are PRE-DIFFERENCED: index j holds the
     increment valid_time j -> j+1, per member, then mean/sd over members
@@ -25,12 +33,16 @@ What the reference scripts need (vendor/PROVENANCE.md, vendor/ensemble_cgan/refe
   - mvua-7d: forecast_date.py hard-codes indices 1..29 of a file from +0 h.
 Units stay as published (m, J m-2, ...): both scripts convert themselves.
 
-Not stated in any of the source repositories, so set here and recorded in the file:
---members all (control + 50, default) and --ddof 0 (population sd, default).
+Members and sd convention are not stated in any source repository; both are
+recorded in the file. Defaults --members all (control + 50) and --ddof 1 (sample
+sd) are the ones that reproduce Oxford's file: with the native-grid sd, the
+median over fields of sd_oxford / sd_here is 0.999 (6 h) and 1.000 (24 h), against
+1.009-1.010 = sqrt(51/50) with --ddof 0 and 0.993 with the 50 perturbed members
+(20261026 00z; README section 11).
 
 The fields are read once for all products together: one field at a time, every
-lead time any product needs, --threads at once (~55 MB per lead time on the frame,
-float64; ~1.7 GB for mvua-7d's 30).
+lead time any product needs, --threads at once (~55 MB per lead time: 51 members
+on the 385 x 353 native window, float64; ~1.7 GB for mvua-7d's 30).
 
   python step6_sewaa_netcdf.py --store local:$HOME/icechunk-local/ecmwf-ifs-0p1-cgan14-19e55e-25n15s/20261026T00z-sewaa \\
       --product jurre-6h mvua-7d --outdir nc
@@ -57,10 +69,14 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="netCDF4")
 warnings.filterwarnings("ignore", message="Setting the shape on a NumPy array")
 
 
-def reduce_product(blocks, steps, field, ddof):
-    """{lead h: (member, 384, 352)} -> mean, sd, each (len(steps), 384, 352)."""
+def reduce_product(blocks, steps, field, ddof, sd_grid="native"):
+    """{lead h: (member, 385, 353) native window} -> mean, sd, each (len(steps), 384, 352).
+
+    sd_grid "native": mean and sd over members on the 0.1 deg window, then each
+    field on the frame. "frame": every member on the frame first, then mean and sd.
+    """
     n = len(steps)
-    mean = np.full((n,) + blocks[steps[0]].shape[1:], np.nan, np.float32)
+    mean = np.full((n, len(TF_LAT), len(TF_LON)), np.nan, np.float32)
     sd = np.full_like(mean, np.nan)
     for k, s in enumerate(steps):
         if field in C.ACCUMULATED:
@@ -69,8 +85,13 @@ def reduce_product(blocks, steps, field, ddof):
             x = blocks[steps[k + 1]] - blocks[s]
         else:
             x = blocks[s]
-        mean[k] = x.mean(axis=0)
-        sd[k] = x.std(axis=0, ddof=ddof)
+        if sd_grid == "frame":
+            x = to_tf_frame(x, 0, 0)
+            mean[k] = x.mean(axis=0)
+            sd[k] = x.std(axis=0, ddof=ddof)
+        else:
+            mean[k] = to_tf_frame(x.mean(axis=0)[None], 0, 0)[0]
+            sd[k] = to_tf_frame(x.std(axis=0, ddof=ddof)[None], 0, 0)[0]
     return mean, sd
 
 
@@ -84,7 +105,12 @@ def main():
     ap.add_argument("--outdir", default="nc", help="the product folders go under here")
     ap.add_argument("--members", default="all",
                     help="all (0..50, default), perturbed (1..50), or a count N (first N perturbed)")
-    ap.add_argument("--ddof", type=int, default=0, help="sd over members: 0 population, 1 sample")
+    ap.add_argument("--ddof", type=int, default=1,
+                    help="sd over members: 1 sample (default, as the operational files), 0 population")
+    ap.add_argument("--sd-grid", choices=["native", "frame"], default="native",
+                    help="native (default, as the operational files): mean/sd over members "
+                         "on the 0.1 deg grid, then onto the frame; frame: members onto the "
+                         "frame first (before 2026-11-09)")
     ap.add_argument("--complevel", type=int, default=1)
     ap.add_argument("--threads", type=int, default=6)
     a = ap.parse_args()
@@ -134,6 +160,9 @@ def main():
         r.cgan_product = p
         r.members = f"{len(members)}: {members[0]}..{members[-1]}"
         r.sd_ddof = a.ddof
+        r.sd_grid = ("native: mean and sd over members on the 0.1 deg grid, then onto the frame"
+                     if a.sd_grid == "native" else
+                     "frame: each member onto the frame, then mean and sd")
         r.accumulated = ("tp cp ssr: index j holds the per-member increment valid_time j -> "
                          "j+1, then mean/sd over members; the last index is NaN")
         r.source_store = a.store
@@ -158,15 +187,18 @@ def main():
         roots[p] = r
     print(f"store    {a.store}  snapshot {snap}")
     print(f"cycle    {date8} {hh}z  {len(members)} members  {len(need)} lead times "
-          f"{need[0]}..{need[-1]} h  -> {' '.join(a.product)}")
+          f"{need[0]}..{need[-1]} h  -> {' '.join(a.product)}  (sd ddof {a.ddof}, "
+          f"{a.sd_grid} grid)")
 
     try:
         for f in C.FIELDS:
             def fetch(s, f=f):
-                # float64 before the 4-point mean: ssr accumulations reach 4e7 J m-2,
-                # where float32 spacing (4 J) is the size of a night-time increment
+                # float64 before any arithmetic: ssr accumulations reach 4e7 J m-2,
+                # where float32 spacing (4 J) is the size of a night-time increment.
+                # Kept on the native grid, cut to the window the frame needs.
                 b = ds[f].isel(time=0, step=steps_h.index(s)).values[midx].astype(np.float64)
-                return s, to_tf_frame(b[:, ::-1, :] if flip else b, j0, i0)
+                b = b[:, ::-1, :] if flip else b
+                return s, b[:, j0:j0 + len(TF_LAT) + 1, i0:i0 + len(TF_LON) + 1]
 
             with cf.ThreadPoolExecutor(a.threads) as ex:
                 blocks = dict(ex.map(fetch, need))
@@ -174,7 +206,7 @@ def main():
                 if not np.isfinite(b).all():
                     sys.exit(f"{f} +{s}h has non-finite values -- run step5_check.py")
             for p, r in roots.items():
-                mean, sd = reduce_product(blocks, C.PRODUCTS[p]["steps"], f, a.ddof)
+                mean, sd = reduce_product(blocks, C.PRODUCTS[p]["steps"], f, a.ddof, a.sd_grid)
                 for kind, arr in (("mean", mean), ("standard_deviation", sd)):
                     v = r.createVariable(
                         f"{f}_ensemble_{kind}", "f4", ("valid_time", "latitude", "longitude"),

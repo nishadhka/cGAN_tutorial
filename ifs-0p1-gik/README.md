@@ -486,7 +486,7 @@ The IFS NetCDF is an intermediate: it is rebuilt from the realized store in ~5 m
 | `run_local.sh`, `run_ewc.sh` | End-to-end drivers (`run_ewc.sh` takes several cycles) |
 | `upload_files.py` | Copy finished files (the inference output) to source.coop or Ceph |
 | `logs/` | Logs of the runs measured in §0 |
-| `runs/` | Run reports. `make_local_run_report.py` turns a `run_local.sh` log and timing TSV into a Markdown report with one section per cycle. `2026-10-30-local-9day-*` is the nine-day run in §0 |
+| `runs/` | Run reports. `make_local_run_report.py` turns a `run_local.sh` log and timing TSV into a Markdown report with one section per cycle; `2026-10-30-local-9day-*` and `2026-11-08-local-10day-*` are the runs in §0. `compare_with_oxford.py` compares our SEWAA NetCDFs with the operational ones (§11) |
 
 ## 10. Provenance
 
@@ -523,8 +523,34 @@ All of the following come from `grib-index-kerchunk` at `1d12c38` (branch `ecmwf
 - **+174 h is possible.** The 00z and 12z runs are 3-hourly to 144 h and then **6-hourly to 360 h**, so 150, 156, 162, 168 and 174 h are all published. The public virtual store holds them for every cycle (checked: steps 144, 150 … 186 present for 00z and 12z). The old `config.STEPS` stopped at 168 h only because `ensemble-forecast.py` did. The last 24 h day (150–174 h) needs the instants 150 … 174 h and the increments 150→156 … 168→174 h, and both exist.
 - **06z/18z** stop at 144 h. They can make `jurre-6h` (it ends at 54 h) but not `mvua-7d`; `run_local.sh` and step 4 refuse to try.
 - **Pre-differenced accumulations.** In the SEWAA file, index j of `tp`, `cp` and `ssr` holds the per-member increment from valid time j to j+1, then mean/sd over members (`ensemble-cgan data.py load_fcst`: "data[:, j] has accumulation between times j and j+1"). The last index has no j+1 and is NaN; neither script reads it.
-- **Members and sd.** No source repository states them. The default here is all 51 members and population sd (`ddof=0`); `--members`/`--ddof` on step 6 (`NC_MEMBERS`/`DDOF` in `run_local.sh`) change them. Check against one operational `IFS_*.nc` when one is at hand.
+- **Members and sd.** No source repository states them, so they were matched to an operational file (below). The defaults are all 51 members, the **sample sd (`ddof=1`)**, and mean/sd taken over members **on the native 0.1° grid before the frame average** (`--sd-grid native`). `--members`, `--ddof` and `--sd-grid` on step 6 change them, as do `NC_MEMBERS` and `DDOF` in `run_local.sh`. Files written before 2026-11-09 used `--sd-grid frame --ddof 0`.
 - **Mvua output name.** `forecast_date.py` writes `GAN_<date>_00Z.nc` whatever the run; `step7_infer.py` keeps the run's hour in the name.
+
+**Compared with the operational file (2026-11-09).** SEWAA's current job (`icpac-igad/SEWAA-forecasts` `run_forecast.py`, `IFS_SOURCES`, lines 190–200) downloads a ready-made `IFS_<date>_<HH>Z.nc` from these mirrors, in order:
+1. Oxford, `rain.physics.ox.ac.uk/ICPAC/operational/{6,24}h_accumulations/IFS_forecast_data/<year>/`;
+2. `megacorr.dynu.net`;
+3. the ICPAC data portal.
+
+The Oxford files are public. Its 6 h and 24 h files for 20261026 00z were compared with ours using `runs/compare_with_oxford.py`, over every field and valid time:
+- **Layout:** identical. The same dimensions, the 28 variables, the 384 × 352 frame (−13.65 … 24.65°N, 19.15 … 54.25°E), and the valid times +30 … 54 h (6 h) and +0 … 174 h (24 h).
+- **Accumulated fields:** `tp`, `cp` and `ssr` are 6 h increments in both, although Oxford's `units` say "per hour/second". Oxford's last accumulated index is 0; ours is NaN, and neither script reads it.
+- **Mean:** for every field, mean(Oxford)/mean(ours) is 0.997–1.008. The RMS difference is 1–2.5% of each field's spread with the 51 or the 50 perturbed members alike, so Oxford's source grid or interpolation differs slightly. Oxford's 20261108 file was ready at 08:50 UTC, before the 0.1° open data, so Oxford's input is probably not the open data.
+- **sd:** the median over valid times of sd(Oxford)/sd(ours), then the median over fields:
+
+  | step 6 setting | 6 h | 24 h | per field |
+  |---|---|---|---|
+  | members onto the frame, then sd, `ddof=0` (before 2026-11-09) | 1.038 | 1.037 | 1.017–1.097: low, most for small-scale fields (`tclw`, `cp`, `tcrw`) |
+  | sd on the native grid, then the frame, `ddof=0` | 1.009 | 1.010 | = √(51/50) |
+  | **sd on the native grid, then the frame, `ddof=1` (default)** | **0.999** | **1.000** | 0.984–1.008 |
+  | the same with the 50 perturbed members | 0.993 | 0.994 | |
+
+  So the operational sd is the sample sd over the 51 members on the native grid, then put on the frame. The 4-point mean of each member first smooths the members and lowers their spread.
+
+**Using these files in `SEWAA-forecasts`.** `run_forecast.py` downloads only if `IFS_<date>_<HH>Z.nc` is not already in its IFS folder and readable. To make it use ours instead, copy them there first:
+- `cgan-ifs-6h-ens/` → `$STORE/forecasts/IFS_6h_forecast_data/`;
+- `cgan-ifs-7d-ens/` → `$STORE/forecasts/IFS_24h_forecast_data/`.
+
+Under docker (`CGAN_DATA_MOUNTED=1`) the folders are `{6,24}h_accumulations/IFS_forecast_data/`.
 
 **The flow in `run_local.sh`.** No step needs credentials or writes anywhere but this machine:
 

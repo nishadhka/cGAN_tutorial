@@ -20,7 +20,7 @@
 #   BUILD_VD=1          build/append the cycle in a LOCAL virtual store first
 #                       (step1) and read that instead; needs no upload either
 #   IFS0P1_LOCAL_ROOT   stores (default ~/icechunk-local); OUTDIR (./nc); GAN_OUTDIR (./gan)
-#   THREADS (12 block threads), MEMBERS (all 51), NC_MEMBERS (all), DDOF (0)
+#   THREADS (12 block threads), MEMBERS (all 51), NC_MEMBERS (all), DDOF (1)
 #   CLUSTER=1           step4 on a Frisky local cluster instead: WORKERS (2) x THREADS (4)
 #   TIMING              per-stage seconds appended here (default $D/logs/timing_local.tsv)
 #   JURRE_MODEL_FOLDER, JURRE_CHECKPOINT (316800), JURRE_CONSTANTS
@@ -106,7 +106,7 @@ tick step5_check
 
 echo "=== step6 SEWAA NetCDF -> $OUT"
 $PY -u "$D/step6_sewaa_netcdf.py" --store "local:$SINK" --outdir "$OUT" --product $PRODUCTS \
-    --members ${NC_MEMBERS:-all} --ddof ${DDOF:-0} 2>&1 | grep --line-buffered -v -E "$F"
+    --members ${NC_MEMBERS:-all} --ddof ${DDOF:-1} 2>&1 | grep --line-buffered -v -E "$F"
 tick step6_netcdf
 
 f=IFS_${DATE}_${RUN}Z.nc
